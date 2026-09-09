@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>24 · RoPE — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0023-cross-attention.html">← 23 · Cross Attention</a><span>›</span><span>第 24 课：RoPE</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:58.5%"></div></div>
+  <div class="progress-label">24 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 24 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>旋转位置编码 (RoPE)</h1>
+    <p class="lesson-tagline">LLaMA 的位置编码：把位置信息编成旋转矩阵，通过配对维度旋转角度实现。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 RoPE 的核心思想：旋转向量对</li>
+      <li>掌握频率矩阵的构造和应用</li>
+      <li>能写出 <code>apply_rope(x, position_ids)</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>为什么旋转？</h3>
+    <p>RoPE 希望 <strong>内积只依赖相对位置</strong>：<code>q_m · k_n = f(m-n)</code>。
+    旋转矩阵满足：<code>rotate(q, m) · rotate(k, n) = q · rotate(k, n-m)</code>，
+    内积天然包含相对位置信息。</p>
+
+    <h3>旋转操作</h3>
+    <pre><code># 将 d_k 维向量按对拆分，每对 (x_{2i}, x_{2i+1}) 旋转角度 θ_i * pos
+# θ_i = 1 / (10000^(2i/d))   — 频率，i 越大频率越低
+
+# 旋转公式（复数乘法）：
+# [x_r, x_i] * [cos(θ*m), sin(θ*m)] =
+#   [x_r*cos - x_i*sin, x_r*sin + x_i*cos]
+
+# 等价于：
+# rotate_half(x): 将后半维移到前半，并取负
+# x * cos + rotate_half(x) * sin</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def precompute_rope_freqs(d_k, max_seq_len, base=10000):
+    # 频率：(d_k/2,)
+    i   = torch.arange(0, d_k, 2).float()
+    inv_freq = 1.0 / (base ** (i / d_k))
+    # 位置 × 频率 → (max_seq_len, d_k/2)
+    t   = torch.arange(max_seq_len).float()
+    freqs = torch.outer(t, inv_freq)
+    # cos/sin 各 (max_seq_len, d_k/2)
+    return torch.cos(freqs), torch.sin(freqs)
+
+def rotate_half(x):
+    x1 = x[..., :x.shape[-1]//2]   # 前半
+    x2 = x[..., x.shape[-1]//2:]   # 后半
+    return torch.cat([-x2, x1], dim=-1)
+
+def apply_rope(x, cos, sin):
+    # x: (B, h, S, d_k), cos/sin: (S, d_k/2)
+    cos = cos.unsqueeze(0).unsqueeze(0)   # (1,1,S,dk/2) → repeat
+    sin = sin.unsqueeze(0).unsqueeze(0)
+    cos = cos.repeat(1, 1, 1, 2)          # (1,1,S,dk)
+    sin = sin.repeat(1, 1, 1, 2)
+    return x * cos + rotate_half(x) * sin</code></pre>
+
+    <div class="callout">
+      <strong>LLaMA 细节：</strong>RoPE 只应用到 Q 和 K，不应用到 V。
+      位置信息已经通过 Q·K 的内积传入注意力权重，V 不需要。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！RoPE 对 Q 和 K 应用旋转，V 不旋转，位置信息通过 Q·K 内积体现。"
+         data-feedback-incorrect="✗ 不对。RoPE 只应用于 Q 和 K，不应用于 V。">
+      <h3>Q1 · 应用范围</h3>
+      <p>RoPE 在注意力中应用于哪些张量？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> Q、K、V 都应用</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 只有 Q 和 K</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 只有 Q</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 只有 V</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！base=10000 时，低维度（i小）频率高，高维度（i大）频率低，类似正弦位置编码。"
+         data-feedback-incorrect="✗ 不对。inv_freq = 1/(10000^(2i/d))，i 越大 inv_freq 越小，低维频率高、高维频率低。">
+      <h3>Q2 · 频率分布</h3>
+      <p>RoPE 频率 <code>θ_i = 1/(10000^(2i/d))</code>，i 越大时频率如何变化？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 频率越来越高（θ 越来越大）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 频率保持不变</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 频率越来越低（θ 越来越小）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 交替高低</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！RoPE 的旋转操作保证了 Q·K 内积只依赖于相对位置 (m-n)，而非绝对位置。"
+         data-feedback-incorrect="✗ 不对。RoPE 的核心属性是相对位置表达：内积 q_m·k_n 只依赖 m-n。">
+      <h3>Q3 · RoPE 优势</h3>
+      <p>RoPE 相比绝对位置编码（如 learned PE）的核心优势？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 天然编码相对位置，更易外推到训练时未见的长度</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 参数量更少</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 计算速度更快</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 不需要位置索引</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def precompute_rope_freqs(d_k, max_seq_len, base=10000):
+    inv_freq = 1.0 / (base ** (torch.arange(0, d_k, 2).float() / d_k))
+    t = torch.arange(max_seq_len).float()
+    freqs = torch.outer(t, inv_freq)
+    return torch.cos(freqs), torch.sin(freqs)
+
+def rotate_half(x):
+    x1, x2 = x[..., :x.shape[-1]//2], x[..., x.shape[-1]//2:]
+    return torch.cat([-x2, x1], dim=-1)
+
+def apply_rope(x, cos, sin):
+    cos = cos.unsqueeze(0).unsqueeze(0).repeat(1,1,1,2)
+    sin = sin.unsqueeze(0).unsqueeze(0).repeat(1,1,1,2)
+    return x * cos + rotate_half(x) * sin</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>核心</strong>：按位置旋转 Q/K，内积只依赖相对位置</li>
+      <li><strong>旋转</strong>：<code>x*cos + rotate_half(x)*sin</code></li>
+      <li><strong>频率</strong>：<code>1/(10000^(2i/d))</code>，低维高频、高维低频</li>
+      <li><strong>代表模型</strong>：LLaMA 1/2/3, Qwen, Mistral</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："RoPE 如何做长度外推（YaRN/LongRoPE）？"，"RoPE 和 ALiBi 的区别？"</div>
+  <nav class="lesson-nav">
+    <a href="./0023-cross-attention.html">← 23 · Cross Attention</a>
+    <a href="./0025-flash-attention.html">下一课：25 · Flash Attention →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

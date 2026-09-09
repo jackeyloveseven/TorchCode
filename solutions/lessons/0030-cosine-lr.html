@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>30 · Cosine LR — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0029-adam.html">← 29 · Adam</a><span>›</span><span>第 30 课：Cosine LR</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:73.2%"></div></div>
+  <div class="progress-label">30 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 30 课</span><span class="badge badge-easy">Easy</span></div>
+    <h1>余弦学习率调度</h1>
+    <p class="lesson-tagline">线性 warmup + 余弦衰减：LLM 训练的标准 LR 策略。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 warmup 阶段的作用</li>
+      <li>掌握余弦衰减公式：<code>0.5 * (1 + cos(π * t/T))</code></li>
+      <li>能实现 <code>get_lr(step)</code> 函数</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>两阶段调度</h3>
+    <pre><code># 阶段 1：线性 warmup（step 0 到 warmup_steps）
+lr = max_lr * (step / warmup_steps)
+# 从 0 线性增到 max_lr
+
+# 阶段 2：余弦衰减（step > warmup_steps）
+progress = (step - warmup_steps) / (total_steps - warmup_steps)
+lr = min_lr + 0.5 * (max_lr - min_lr) * (1 + cos(π * progress))
+# 从 max_lr 余弦衰减到 min_lr</code></pre>
+
+    <h3>为什么要 warmup？</h3>
+    <p>训练初期模型权重随机，梯度变化大。大 lr 容易导致参数发散。
+    warmup 让模型先"稳定下来"，再用大 lr 加速收敛。</p>
+
+    <h3>余弦 vs 线性衰减</h3>
+    <p>余弦衰减前期下降慢，末期下降快（探索充分再精细收敛）；线性衰减匀速下降。
+    实践中余弦衰减通常更优。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math
+
+def get_cosine_lr(step, max_lr, min_lr, warmup_steps, total_steps):
+    if step < warmup_steps:
+        return max_lr * step / warmup_steps
+    if step >= total_steps:
+        return min_lr
+    progress = (step - warmup_steps) / (total_steps - warmup_steps)
+    return min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * progress))</code></pre>
+
+    <div class="callout">
+      <strong>典型配置（LLaMA）：</strong>
+      warmup_steps ≈ 2000，min_lr = max_lr * 0.1，
+      total_steps 与训练 token 数量对应（约 1T tokens）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！progress=0 时 cos(0)=1，lr = min_lr + 0.5*(max-min)*2 = max_lr；progress=1 时 cos(π)=-1，lr = min_lr。"
+         data-feedback-incorrect="✗ 不对。余弦公式 progress=0 时输出 max_lr，progress=1 时输出 min_lr。">
+      <h3>Q1 · 余弦公式端点</h3>
+      <p>余弦衰减公式 <code>min_lr + 0.5*(max-min)*(1+cos(π*progress))</code> 中，
+      progress=1 时输出是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> max_lr</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (max_lr + min_lr) / 2</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> min_lr</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 0</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！warmup 让模型在早期梯度方差大时用小 lr，避免随机初始化的不稳定导致训练崩溃。"
+         data-feedback-incorrect="✗ 不对。warmup 主要是为了训练初期的稳定性，让模型逐渐适应大学习率。">
+      <h3>Q2 · Warmup 作用</h3>
+      <p>线性 warmup 的主要目的是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 节省计算资源</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 训练初期避免大 lr 导致参数剧烈变化/崩溃</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 提高最终模型精度</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 替代 BatchNorm</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！step >= total_steps 时返回 min_lr，不继续衰减，防止 lr 变为负数。"
+         data-feedback-incorrect="✗ 不对。超过 total_steps 后直接返回 min_lr，这是 boundary condition 的保护。">
+      <h3>Q3 · 边界条件</h3>
+      <p>当 <code>step >= total_steps</code> 时，函数应该返回？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> min_lr（保持最小值）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 0</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> max_lr（重新开始）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 报错</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def get_cosine_lr(step, max_lr, min_lr, warmup_steps, total_steps):
+    if step < warmup_steps:
+        return max_lr * step / warmup_steps
+    if step >= total_steps:
+        return min_lr
+    progress = (step - warmup_steps) / (total_steps - warmup_steps)
+    return min_lr + 0.5 * (max_lr - min_lr) * (1 + math.cos(math.pi * progress))</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>Warmup</strong>：线性从 0 → max_lr，<code>max_lr * step / warmup_steps</code></li>
+      <li><strong>衰减</strong>：<code>min_lr + 0.5*(max-min)*(1+cos(π*progress))</code></li>
+      <li><strong>progress</strong>：<code>(step - warmup) / (total - warmup)</code></li>
+      <li><strong>典型配置</strong>：warmup=2000 steps，min_lr = 0.1 * max_lr</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："余弦退火和 OneCycle 的区别？"，"LLM 训练 lr 一般取多少？"</div>
+  <nav class="lesson-nav">
+    <a href="./0029-adam.html">← 29 · Adam</a>
+    <a href="./0031-gradient-accumulation.html">下一课：31 · Gradient Accumulation →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

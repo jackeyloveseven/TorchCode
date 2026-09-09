@@ -1,13 +1,13 @@
 """Linear Regression Three Ways task."""
 
 TASK = {
-    "title": "Linear Regression",
+    "title": "线性回归",
     "difficulty": "Medium",
     "function_name": "LinearRegression",
-    "hint": "Closed-form: augment $X$ with ones column, solve $w = (X^T X)^{-1} X^T y$ via `torch.linalg.lstsq`. Gradient descent: $\\nabla w = \\frac{2}{N} X^T (\\hat{y} - y)$, update $w \\leftarrow w - \\text{lr} \\cdot \\nabla w$. `nn.Linear`: create `nn.Linear(D, 1)`, use `MSELoss` + `optimizer.step()` loop.",
+    "hint": "解析解：为 $X$ 增加全 1 列，用 `torch.linalg.lstsq` 求解 $w = (X^T X)^{-1} X^T y$。梯度下降：$\\nabla w = \\frac{2}{N} X^T (\\hat{y} - y)$，更新 $w \\leftarrow w - \\text{lr} \\cdot \\nabla w$。`nn.Linear`：创建 `nn.Linear(D, 1)`，使用 `MSELoss` + `optimizer.step()` 循环。",
     "tests": [
         {
-            "name": "Closed-form returns correct shapes",
+            "name": "解析解返回正确形状",
             "code": """
 import torch
 torch.manual_seed(42)
@@ -20,7 +20,7 @@ assert b.shape == (), f'b shape: {b.shape}, expected scalar'
 """,
         },
         {
-            "name": "Closed-form finds correct weights",
+            "name": "解析解求得正确权重",
             "code": """
 import torch
 torch.manual_seed(42)
@@ -35,7 +35,7 @@ assert torch.allclose(b, torch.tensor(true_b), atol=1e-4), f'b: {b.item():.4f} v
 """,
         },
         {
-            "name": "Gradient descent converges",
+            "name": "梯度下降收敛",
             "code": """
 import torch
 torch.manual_seed(42)
@@ -50,7 +50,7 @@ assert abs(b.item() - true_b) < 0.1, f'GD b: {b.item():.4f} vs true: {true_b}'
 """,
         },
         {
-            "name": "nn.Linear approach works",
+            "name": "nn.Linear 方法有效",
             "code": """
 import torch
 torch.manual_seed(42)
@@ -65,7 +65,7 @@ assert abs(b.item() - true_b) < 0.1, f'nn b: {b.item():.4f} vs true: {true_b}'
 """,
         },
         {
-            "name": "All three methods agree",
+            "name": "三种方法结果一致",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -83,7 +83,7 @@ assert abs(b_cf.item() - b_nn.item()) < 0.15, f'Bias CF vs NN: {b_cf.item():.4f}
 """,
         },
         {
-            "name": "Closed-form uses no autograd",
+            "name": "解析解不使用自动微分",
             "code": """
 import torch
 X = torch.randn(30, 2)

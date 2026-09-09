@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>13 · GPT-2 Block — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0012-linear-attention.html">← 12 · Linear Attention</a><span>›</span><span>第 13 课：GPT-2 Block</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:31.7%"></div></div>
+  <div class="progress-label">13 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 13 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>GPT-2 Transformer 块</h1>
+    <p class="lesson-tagline">综合题：Pre-Norm 架构 + 因果注意力 + FFN + 残差连接。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>掌握 Pre-Norm（先 LN 后注意力/FFN）的架构</li>
+      <li>理解残差连接 <code>x = x + sublayer(ln(x))</code></li>
+      <li>能从零搭出完整的 Transformer 块（继承 nn.Module）</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念：Pre-Norm 架构</h2>
+    <pre><code># GPT-2 Block（Pre-Norm）
+x = x + causal_self_attention(ln1(x))   # 残差 + 注意力
+x = x + mlp(ln2(x))                     # 残差 + FFN</code></pre>
+
+    <h3>Pre-Norm vs Post-Norm</h3>
+    <table>
+      <tr><th></th><th>Post-Norm（原始 Transformer）</th><th>Pre-Norm（GPT-2/LLaMA）</th></tr>
+      <tr><td>顺序</td><td>x = LN(x + sublayer(x))</td><td>x = x + sublayer(LN(x))</td></tr>
+      <tr><td>训练稳定性</td><td>较差，需要 warmup</td><td>更稳定，可更大 lr</td></tr>
+      <tr><td>主流</td><td>否</td><td>是（GPT-2, LLaMA, PaLM）</td></tr>
+    </table>
+
+    <h3>FFN（前馈网络）结构</h3>
+    <pre><code># GPT-2 风格 FFN（4倍扩展，GELU 激活）
+FFN(x) = W_2 * GELU(W_1 * x)
+# W_1: (d_model, 4*d_model)，W_2: (4*d_model, d_model)</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math, torch, torch.nn as nn, torch.nn.functional as F
+
+class GPT2Block(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+
+        # 因果自注意力投影
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+        # FFN
+        self.fc1 = nn.Linear(d_model, 4 * d_model)
+        self.fc2 = nn.Linear(4 * d_model, d_model)
+
+    def _causal_attn(self, x):
+        B, S, D = x.shape
+        h, dk = self.num_heads, self.d_k
+        q = self.W_q(x).view(B,S,h,dk).transpose(1,2)
+        k = self.W_k(x).view(B,S,h,dk).transpose(1,2)
+        v = self.W_v(x).view(B,S,h,dk).transpose(1,2)
+        scores = (q @ k.transpose(-2,-1)) / math.sqrt(dk)
+        mask = torch.triu(torch.ones(S,S,device=x.device,dtype=torch.bool), diagonal=1)
+        scores = scores.masked_fill(mask, float('-inf'))
+        out = (torch.softmax(scores,dim=-1) @ v).transpose(1,2).contiguous().view(B,S,D)
+        return self.W_o(out)
+
+    def forward(self, x):
+        x = x + self._causal_attn(self.ln1(x))   # 残差 + 注意力
+        x = x + self.fc2(F.gelu(self.fc1(self.ln2(x))))  # 残差 + FFN
+        return x</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！Pre-Norm 先对 x 做 LayerNorm，再送入子层，再加残差。"
+         data-feedback-incorrect="✗ 不对。Pre-Norm 是先 LN 再子层：x = x + sublayer(LN(x))。">
+      <h3>Q1 · Pre-Norm 顺序</h3>
+      <p>GPT-2 的 Pre-Norm 第一个子层的计算顺序是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> x = LN(x + Attention(x))</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> x = x + Attention(LN(x))</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> x = Attention(x) + LN(x)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> x = LN(Attention(x) + x)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！GPT-2 FFN 将维度从 d_model 扩展到 4*d_model，再压回 d_model。"
+         data-feedback-incorrect="✗ 不对。GPT-2 FFN 的中间层维度是 4 * d_model。">
+      <h3>Q2 · FFN 维度</h3>
+      <p>GPT-2 Block 中 FFN 的中间层维度是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> d_model（不扩展）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 2 * d_model</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 4 * d_model</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 8 * d_model</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！残差连接让梯度可以绕过子层直接流回，解决深层网络梯度消失问题。"
+         data-feedback-incorrect="✗ 不对。残差连接的核心作用是提供梯度的"高速公路"，解决深层梯度消失。">
+      <h3>Q3 · 残差连接</h3>
+      <p>Transformer 中残差连接 <code>x = x + sublayer(x)</code> 的主要作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 为梯度提供直通路径，解决深层梯度消失</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 减少参数量</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 增加模型非线性</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 替代 LayerNorm</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class GPT2Block(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+        self.fc1 = nn.Linear(d_model, 4 * d_model)
+        self.fc2 = nn.Linear(4 * d_model, d_model)
+
+    def forward(self, x):
+        B, S, D = x.shape
+        h, dk = self.num_heads, self.d_k
+        # 因果注意力
+        def attn(z):
+            q = self.W_q(z).view(B,S,h,dk).transpose(1,2)
+            k = self.W_k(z).view(B,S,h,dk).transpose(1,2)
+            v = self.W_v(z).view(B,S,h,dk).transpose(1,2)
+            sc = (q @ k.transpose(-2,-1)) / math.sqrt(dk)
+            mask = torch.triu(torch.ones(S,S,device=x.device,dtype=torch.bool),diagonal=1)
+            sc = sc.masked_fill(mask, float('-inf'))
+            return self.W_o((torch.softmax(sc,dim=-1)@v).transpose(1,2).contiguous().view(B,S,D))
+        x = x + attn(self.ln1(x))
+        x = x + self.fc2(F.gelu(self.fc1(self.ln2(x))))
+        return x</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>架构</strong>：Pre-Norm → 因果多头注意力 → 残差；Pre-Norm → FFN → 残差</li>
+      <li><strong>FFN</strong>：4× 扩展 + GELU 激活（GPT-2 用 GELU，LLaMA 用 SwiGLU）</li>
+      <li><strong>需继承 nn.Module</strong>：才能用 <code>.parameters()</code> 和 optimizer</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："为什么 Pre-Norm 更稳定？"，"LLaMA 和 GPT-2 Block 的主要区别？"</div>
+  <nav class="lesson-nav">
+    <a href="./0012-linear-attention.html">← 12 · Linear Attention</a>
+    <a href="./0014-kv-cache.html">下一课：14 · KV Cache →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

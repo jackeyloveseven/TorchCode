@@ -1,16 +1,16 @@
 """GRPO (Group Relative Policy Optimization) Loss task."""
 
 TASK = {
-    "title": "GRPO (Group Relative Policy Optimization) Loss",
+    "title": "GRPO（组相对策略优化）损失",
     "difficulty": "Hard",
     "function_name": "grpo_loss",
     "hint": (
-        "Per group, normalize rewards: A_i = (r_i - mean_g) / (std_g + eps). "
-        "Detach A_i from graph, then return -mean(A_i * logps)."
+        "对每组归一化奖励：A_i = (r_i - mean_g) / (std_g + eps)。"
+        "将 A_i 从计算图中分离（detach），然后返回 -mean(A_i * logps)。"
     ),
     "tests": [
         {
-            "name": "Basic shape & type",
+            "name": "基本形状与类型",
             "code": "\n"
             "import torch\n"
             "from torch import Tensor\n"
@@ -21,7 +21,7 @@ TASK = {
             "assert isinstance(loss, Tensor) and loss.dim() == 0, 'Loss must be scalar Tensor'\n"
         },
         {
-            "name": "Numeric check vs reference",
+            "name": "数值对比参考实现",
             "code": "\n"
             "import torch\n"
             "from torch import Tensor\n"
@@ -50,7 +50,7 @@ TASK = {
             "assert torch.allclose(loss_student, loss_ref, atol=1e-5, rtol=1e-5), 'Loss should match reference implementation numerically on a fixed example'\n"
         },
         {
-            "name": "Gradient flows to logps only",
+            "name": "梯度仅流向 logps",
             "code": "\n"
             "import torch\n"
             "logps = torch.randn(4, requires_grad=True)\n"
@@ -61,7 +61,7 @@ TASK = {
             "assert logps.grad is not None and rewards.grad is None, 'Gradients should flow only through logps'\n"
         },
         {
-            "name": "Group-wise normalization",
+            "name": "分组归一化",
             "code": "\n"
             "import torch\n"
             "logps = torch.zeros(4, requires_grad=True)\n"

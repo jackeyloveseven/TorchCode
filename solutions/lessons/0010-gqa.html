@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>10 · GQA — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0009-causal-attention.html">← 09 · Causal Attention</a><span>›</span><span>第 10 课：GQA</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:24.4%"></div></div>
+  <div class="progress-label">10 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 10 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>分组查询注意力 (GQA)</h1>
+    <p class="lesson-tagline">LLaMA 2 / Mistral 用的技术：KV 头少于 Q 头，大幅减小 KV 缓存。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 GQA 如何用少量 KV 头服务多个 Q 头</li>
+      <li>掌握 <code>repeat_interleave</code> 扩展 KV 头的技巧</li>
+      <li>理解 GQA 对 KV Cache 大小的影响</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <table>
+      <tr><th></th><th>MHA</th><th>MQA</th><th>GQA</th></tr>
+      <tr><td>Q 头数</td><td>h</td><td>h</td><td>h</td></tr>
+      <tr><td>KV 头数</td><td>h</td><td>1</td><td>g（1 &lt; g &lt; h）</td></tr>
+      <tr><td>每组 Q 头数</td><td>1</td><td>h</td><td>h/g</td></tr>
+    </table>
+    <p>GQA 是 MHA（每头有自己的 KV）和 MQA（所有头共享一个 KV）之间的折中。
+    LLaMA 2-70B 用 8 个 KV 头配 64 个 Q 头（每组 8 个 Q 头共享 1 个 KV 头）。</p>
+
+    <h3>关键操作：KV 头扩展</h3>
+    <pre><code># KV 投影: (B, S, num_kv_heads * d_k)
+k = self.W_k(x).view(B, S, num_kv_heads, d_k).transpose(1, 2)  # (B, g, S, dk)
+# 每个 KV 头要服务 groups_per_head = h // g 个 Q 头
+groups = num_heads // num_kv_heads
+k = k.repeat_interleave(groups, dim=1)   # (B, h, S, dk)</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class GroupQueryAttention:
+    def __init__(self, d_model, num_heads, num_kv_heads):
+        self.num_heads    = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.d_k   = d_model // num_heads
+        self.W_q   = nn.Linear(d_model, d_model)
+        self.W_k   = nn.Linear(d_model, num_kv_heads * self.d_k)
+        self.W_v   = nn.Linear(d_model, num_kv_heads * self.d_k)
+        self.W_o   = nn.Linear(d_model, d_model)
+
+    def forward(self, x):
+        B, S, D = x.shape
+        h, g, dk = self.num_heads, self.num_kv_heads, self.d_k
+        groups = h // g
+
+        q = self.W_q(x).view(B, S, h, dk).transpose(1, 2)   # (B, h, S, dk)
+        k = self.W_k(x).view(B, S, g, dk).transpose(1, 2)   # (B, g, S, dk)
+        v = self.W_v(x).view(B, S, g, dk).transpose(1, 2)
+
+        k = k.repeat_interleave(groups, dim=1)  # (B, h, S, dk)
+        v = v.repeat_interleave(groups, dim=1)
+
+        scores  = (q @ k.transpose(-2, -1)) / math.sqrt(dk)
+        weights = torch.softmax(scores, dim=-1)
+        out = (weights @ v).transpose(1, 2).contiguous().view(B, S, D)
+        return self.W_o(out)</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！W_k 输出维度是 num_kv_heads * d_k，而不是全部 d_model。"
+         data-feedback-incorrect="✗ 不对。W_k 只投影到 num_kv_heads 个头的维度，比 W_q 小。">
+      <h3>Q1 · 参数形状</h3>
+      <p><code>num_heads=8, num_kv_heads=2, d_model=256</code> 时，<code>W_k</code> 的输出维度是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 256（和 W_q 一样）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 32（只有一个 KV 头的维度）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 64（num_kv_heads * d_k = 2 * 32）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 128（一半的 d_model）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！repeat_interleave(groups, dim=1) 将每个 KV 头重复 groups 次，扩展到与 Q 头数一致。"
+         data-feedback-incorrect="✗ 不对。repeat_interleave 是按元素重复，每个头重复 groups 次，结果头数变为 g*groups = h。">
+      <h3>Q2 · KV 扩展</h3>
+      <p><code>k: (B, 2, S, dk)</code>，<code>k.repeat_interleave(4, dim=1)</code> 的结果 shape？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> (B, 2, S, 4*dk)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (B, 8, S, dk)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> (4*B, 2, S, dk)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> (B, 2, 4*S, dk)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！GQA 的 KV Cache 大小 = num_kv_heads / num_heads 倍的 MHA，显著减小显存占用。"
+         data-feedback-incorrect="✗ 不对。GQA 减小的是 KV Cache，Q 投影大小不变。">
+      <h3>Q3 · GQA 的收益</h3>
+      <p>相比 MHA，GQA 主要节省了什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> KV Cache 显存（推理时）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> Q 投影的参数量</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 训练时的梯度显存</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> Softmax 的计算量</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class GroupQueryAttention:
+    def __init__(self, d_model, num_heads, num_kv_heads):
+        self.num_heads    = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.d_k = d_model // num_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, num_kv_heads * self.d_k)
+        self.W_v = nn.Linear(d_model, num_kv_heads * self.d_k)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, x):
+        B, S, D = x.shape
+        h, g, dk = self.num_heads, self.num_kv_heads, self.d_k
+        groups = h // g
+        q = self.W_q(x).view(B, S, h, dk).transpose(1, 2)
+        k = self.W_k(x).view(B, S, g, dk).transpose(1, 2).repeat_interleave(groups, dim=1)
+        v = self.W_v(x).view(B, S, g, dk).transpose(1, 2).repeat_interleave(groups, dim=1)
+        scores  = (q @ k.transpose(-2, -1)) / math.sqrt(dk)
+        weights = torch.softmax(scores, dim=-1)
+        out = (weights @ v).transpose(1, 2).contiguous().view(B, S, D)
+        return self.W_o(out)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>核心思路</strong>：g 个 KV 头，每个服务 h/g 个 Q 头</li>
+      <li><strong>扩展技巧</strong>：<code>repeat_interleave(groups, dim=1)</code></li>
+      <li><strong>收益</strong>：KV Cache 缩小为 g/h 倍（节省推理显存）</li>
+      <li><strong>代表模型</strong>：LLaMA 2-70B（g=8, h=64），Mistral 7B（g=8, h=32）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："MQA 和 GQA 的区别？"，"为什么 GQA 不影响模型质量？"</div>
+  <nav class="lesson-nav">
+    <a href="./0009-causal-attention.html">← 09 · Causal Attention</a>
+    <a href="./0011-sliding-window.html">下一课：11 · Sliding Window →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

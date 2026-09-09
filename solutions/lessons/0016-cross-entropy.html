@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>16 · Cross Entropy — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0015-mlp.html">← 15 · SwiGLU MLP</a><span>›</span><span>第 16 课：Cross Entropy</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:39%"></div></div>
+  <div class="progress-label">16 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 16 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>交叉熵损失</h1>
+    <p class="lesson-tagline">从 logits 到损失：log-sum-exp 数值稳定版，精通它才能理解语言模型训练。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解交叉熵 = 负对数似然（NLL）</li>
+      <li>掌握 log-softmax + NLL 的数值稳定实现</li>
+      <li>能手写 <code>cross_entropy(logits, targets)</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>公式推导</h3>
+    <pre><code># 标准定义
+CE = -Σ_c y_c * log(p_c)     # y_c 是 one-hot，p_c 是概率
+   = -log(p_{target})         # 只有正确类贡献
+
+# p_{target} = softmax(logits)[target]
+#            = exp(z_{target}) / Σ_c exp(z_c)
+
+# 所以：
+CE = -z_{target} + log(Σ_c exp(z_c))
+   = logsumexp(z) - z_{target}</code></pre>
+
+    <h3>数值稳定 log-sum-exp</h3>
+    <pre><code># 直接 log(sum(exp(z))) 会数值溢出（z 很大时）
+# 稳定版：减去最大值
+m = z.max(dim=-1, keepdim=True).values
+log_sum_exp = m.squeeze(-1) + (z - m).exp().sum(dim=-1).log()</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def cross_entropy(logits, targets):
+    # logits: (N, C)，targets: (N,) 整数类别
+    # 数值稳定：减去 max
+    m   = logits.max(dim=-1, keepdim=True).values
+    log_sum_exp = (logits - m).exp().sum(dim=-1).log() + m.squeeze(-1)
+    # 正确类的 logit
+    correct_logits = logits[torch.arange(len(targets)), targets]
+    loss = log_sum_exp - correct_logits
+    return loss.mean()</code></pre>
+
+    <div class="callout">
+      <strong>等价写法：</strong><code>F.cross_entropy(logits, targets)</code>
+      内部就是 <code>log_softmax + nll_loss</code>，和上面等价。
+      面试中可以直接用，但要能解释原理。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！CE = logsumexp(z) - z_target，就是对数空间的"总概率 - 正确类概率"。"
+         data-feedback-incorrect="✗ 不对。从 softmax 推导：CE = -log(exp(z_t)/Σexp(z_c)) = -z_t + log(Σexp(z_c))。">
+      <h3>Q1 · 公式</h3>
+      <p>交叉熵损失（对单个样本，正确类索引为 t）等于？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> softmax(z)[t]</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> logsumexp(z) - z[t]</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> z[t] - logsumexp(z)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> -z[t]</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！减去 max 后最大指数变为 exp(0)=1，其余 < 1，不会溢出。"
+         data-feedback-incorrect="✗ 不对。稳定技巧是减 max：log(Σexp(z-m)) + m，等价但不会溢出。">
+      <h3>Q2 · 数值稳定</h3>
+      <p>为什么 logsumexp 要减去 max？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 加快计算速度</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 保证结果在 [0, 1] 范围</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 防止 exp 数值溢出（overflow）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 等价于 batch normalization</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！logits[arange(N), targets] 用高级索引一次提取每个样本对应正确类的 logit。"
+         data-feedback-incorrect="✗ 不对。这是 PyTorch 高级索引：行用 arange，列用 targets，提取对角线元素。">
+      <h3>Q3 · 高级索引</h3>
+      <p><code>logits[torch.arange(N), targets]</code> 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 提取每个样本对应正确类的 logit（形状 (N,)）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 提取 targets 列的所有行</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 将 logits 按 targets 排序</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 报错，索引形状不匹配</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def cross_entropy(logits, targets):
+    m   = logits.max(dim=-1, keepdim=True).values
+    lse = (logits - m).exp().sum(dim=-1).log() + m.squeeze(-1)
+    correct = logits[torch.arange(len(targets)), targets]
+    return (lse - correct).mean()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>loss = logsumexp(z) - z[target]</code></li>
+      <li><strong>稳定技巧</strong>：减去 max 再做 exp，等价但无溢出</li>
+      <li><strong>索引</strong>：<code>logits[arange(N), targets]</code> 提取正确类 logit</li>
+      <li><strong>均值</strong>：最后 <code>.mean()</code>，对 batch 平均</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："label smoothing 怎么实现？"，"为什么不直接用 BCE 损失？"</div>
+  <nav class="lesson-nav">
+    <a href="./0015-mlp.html">← 15 · SwiGLU MLP</a>
+    <a href="./0017-dropout.html">下一课：17 · Dropout →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

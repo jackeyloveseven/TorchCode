@@ -1,13 +1,13 @@
 """Softmax Attention task."""
 
 TASK = {
-    "title": "Softmax Attention",
+    "title": "Softmax 注意力",
     "difficulty": "Hard",
     "function_name": "scaled_dot_product_attention",
-    "hint": "$\\text{scores} = (Q K^T) / \\sqrt{d_k}$, then $\\text{softmax}(\\text{scores}, \\text{dim}=-1) V$. Use `torch.bmm` for batched matmul.",
+    "hint": "$\\text{scores} = (Q K^T) / \\sqrt{d_k}$，再计算 $\\text{softmax}(\\text{scores}, \\text{dim}=-1) V$。使用 `torch.bmm` 进行批量矩阵乘法。",
     "tests": [
         {
-            "name": "Output shape",
+            "name": "输出形状",
             "code": """
 import torch, math
 torch.manual_seed(42)
@@ -20,7 +20,7 @@ assert out.shape == (B, S, D), f'Shape mismatch: {out.shape} vs {(B, S, D)}'
 """,
         },
         {
-            "name": "Numerical correctness",
+            "name": "数值正确性",
             "code": """
 import torch, math
 torch.manual_seed(42)
@@ -36,7 +36,7 @@ assert torch.allclose(out, ref, atol=1e-5), 'Value mismatch vs reference'
 """,
         },
         {
-            "name": "Gradient check",
+            "name": "梯度检验",
             "code": """
 import torch, math
 torch.manual_seed(42)
@@ -51,7 +51,7 @@ assert V.grad is not None, 'V.grad is None'
 """,
         },
         {
-            "name": "Cross-attention (seq_q != seq_k)",
+            "name": "交叉注意力（seq_q != seq_k）",
             "code": """
 import torch
 Q = torch.randn(1, 3, 16)

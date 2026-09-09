@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>01 · ReLU — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="container">
+
+  <!-- 面包屑 -->
+  <nav class="breadcrumb">
+    <a href="../NOTES.md">TorchCode</a>
+    <span>›</span>
+    <span>第 01 课：ReLU</span>
+  </nav>
+
+  <!-- 进度条 -->
+  <div class="progress">
+    <div class="progress-fill" style="width: 2.4%"></div>
+  </div>
+  <div class="progress-label">1 / 41 题</div>
+
+  <!-- 标题 -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="lesson-number">第 01 课</span>
+      <span class="badge badge-easy">Easy</span>
+    </div>
+    <h1>实现 ReLU</h1>
+    <p class="lesson-tagline">PyTorch 最常用的激活函数，也是布尔掩码技巧的第一个练兵场。</p>
+  </header>
+
+  <!-- 学习目标 -->
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 ReLU 的数学定义与直觉</li>
+      <li>掌握 <strong>布尔掩码</strong>这一 PyTorch 核心惯用法</li>
+      <li>知道为什么 in-place 操作会破坏梯度计算</li>
+      <li>通过所有测试（数值、形状、梯度、性能）</li>
+    </ul>
+  </section>
+
+  <!-- 背景 -->
+  <section>
+    <h2>为什么需要激活函数？</h2>
+    <p>
+      神经网络的核心操作是矩阵乘法（线性变换）。问题在于：
+      <strong>线性变换的复合仍然是线性变换</strong>。无论叠多少层，没有激活函数的网络
+      等价于单层线性模型，无法拟合任何非线性关系。
+    </p>
+    <p>
+      激活函数在每层之后引入非线性，让网络具备学习复杂模式的能力。
+    </p>
+
+    <h3>为什么 ReLU 比 Sigmoid / Tanh 更常用？</h3>
+    <table>
+      <tr><th>函数</th><th>输出范围</th><th>正区间导数</th><th>问题</th></tr>
+      <tr><td>Sigmoid</td><td>(0, 1)</td><td>最大 0.25</td><td>梯度消失：多层相乘后趋近 0</td></tr>
+      <tr><td>Tanh</td><td>(-1, 1)</td><td>最大 1.0</td><td>同上，虽好些但仍存在</td></tr>
+      <tr><td><strong>ReLU</strong></td><td>[0, +∞)</td><td><strong>恒为 1</strong></td><td>负区间梯度死亡（可接受）</td></tr>
+    </table>
+    <p>
+      ReLU 正区间导数恒为 1，梯度可以无衰减地传递到任意深度，这是深度学习实用化的关键原因之一。
+    </p>
+  </section>
+
+  <!-- 数学定义 -->
+  <section>
+    <h2>数学定义</h2>
+    <code class="formula">ReLU(x) = max(0, x)</code>
+    <p>逐元素操作，等价于：</p>
+    <pre><code>ReLU(x) = x,  if x > 0
+          0,  if x ≤ 0</code></pre>
+    <p>示例：</p>
+    <pre><code>Input:  tensor([-2., -1.,  0.,  1.,  2.])
+Output: tensor([ 0.,  0.,  0.,  1.,  2.])</code></pre>
+
+    <h3>梯度（导数）</h3>
+    <pre><code>∂ReLU/∂x = 1,  if x > 0
+           0,  if x ≤ 0   (x=0 处通常定义为 0)</code></pre>
+    <div class="callout">
+      <strong>直觉：</strong>正区间，梯度直接"穿透"；负区间，梯度被"截断"。
+      这就是 ReLU 解决梯度消失问题的根本原因。
+    </div>
+  </section>
+
+  <!-- PyTorch 实现 -->
+  <section>
+    <h2>PyTorch 实现：布尔掩码技巧</h2>
+
+    <div class="callout callout-warn">
+      <strong>约束：</strong>不能使用 <code>torch.relu</code>、<code>F.relu</code>、<code>torch.clamp</code>
+      或任何内置激活函数。必须支持 autograd。
+    </div>
+
+    <h3>核心思路：布尔张量 → 浮点掩码 → 逐元素乘法</h3>
+
+    <p>在 PyTorch 中，比较操作返回 <strong>BoolTensor</strong>（<code>True</code> / <code>False</code>），
+    调用 <code>.float()</code> 将其转为 <code>1.0</code> / <code>0.0</code>：</p>
+
+    <pre><code>x = torch.tensor([-2., -1., 0., 1., 2.])
+
+# 步骤 1：比较，得到 BoolTensor
+mask = x > 0
+# tensor([False, False, False,  True,  True])
+
+# 步骤 2：转为 FloatTensor
+mask_f = mask.float()
+# tensor([0., 0., 0., 1., 1.])
+
+# 步骤 3：逐元素乘法
+result = x * mask_f
+# tensor([0., 0., 0., 1., 2.])  ← 就是 ReLU！</code></pre>
+
+    <p>一行写完：</p>
+    <pre><code>def relu(x: torch.Tensor) -> torch.Tensor:
+    return x * (x > 0).float()</code></pre>
+
+    <h3>为什么这支持梯度？</h3>
+    <p>PyTorch 的 autograd 追踪整个计算图。对于 <code>y = x * mask</code>：</p>
+    <ul>
+      <li>正区域（<code>mask = 1.0</code>）：<code>∂y/∂x = 1</code>，梯度原值传过去</li>
+      <li>负区域（<code>mask = 0.0</code>）：<code>∂y/∂x = 0</code>，梯度被截断</li>
+    </ul>
+    <p><code>(x > 0)</code> 本身不可微，autograd 将其视为常数（停止梯度追踪），
+    这正好符合 ReLU 导数的定义。</p>
+
+    <pre><code>x = torch.tensor([-1., 0., 1., 2.], requires_grad=True)
+out = x * (x > 0).float()
+out.sum().backward()
+print(x.grad)
+# tensor([0., 0., 1., 1.])  ✓</code></pre>
+
+    <h3>另一种正确写法（了解即可）</h3>
+    <pre><code>def relu(x: torch.Tensor) -> torch.Tensor:
+    return torch.where(x > 0, x, torch.zeros_like(x))</code></pre>
+    <p><code>torch.where(condition, a, b)</code> 条件选择，同样支持梯度。
+    两种写法在竞赛/面试中都可接受，布尔掩码写法更简洁常见。</p>
+
+    <h3>⚠️ 错误写法：in-place 操作</h3>
+    <pre><code># ❌ 错误！in-place 修改破坏计算图
+def relu_wrong(x):
+    x[x < 0] = 0
+    return x</code></pre>
+    <div class="callout callout-warn">
+      <strong>规则：</strong>PyTorch 的 autograd 需要保存中间值来计算梯度。
+      in-place 操作（<code>x[...] = ...</code>、<code>x.fill_()</code> 等）
+      会覆盖这些中间值，导致反向传播报错或结果错误。
+      <strong>实现算子时，永远返回新张量，不要原地修改输入。</strong>
+    </div>
+  </section>
+
+  <!-- 测验 -->
+  <section>
+    <h2>测验</h2>
+    <p>检验理解，每题即时反馈。点击选项即提交。</p>
+
+    <!-- Q1 -->
+    <div class="quiz-question"
+         data-correct="B"
+         data-feedback-correct="✓ 正确！负值归零，正值保留原值。"
+         data-feedback-incorrect="✗ 不对。ReLU 只保留正值，负值变 0。">
+      <h3>Q1 · 数值计算</h3>
+      <p><code>relu(tensor([-2., 0., 3.]))</code> 的输出是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> tensor([-2., 0., 3.])</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> tensor([&nbsp;0., 0., 3.])</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> tensor([&nbsp;0., 1., 3.])</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> tensor([&nbsp;2., 0., 3.])</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <!-- Q2 -->
+    <div class="quiz-question"
+         data-correct="A"
+         data-feedback-correct="✓ 正确！负区间导数为 0，梯度被截断。"
+         data-feedback-incorrect="✗ 不对。ReLU 在负区间斜率为 0，梯度无法通过。">
+      <h3>Q2 · 梯度</h3>
+      <p><code>x = tensor([-1., 2.])</code> 经 ReLU 后 <code>.sum().backward()</code>，<code>x.grad</code> 是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> tensor([0., 1.])</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> tensor([1., 0.])</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> tensor([1., 1.])</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> tensor([0., 0.])</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <!-- Q3 -->
+    <div class="quiz-question"
+         data-correct="B"
+         data-feedback-correct="✓ 正确！比较运算返回 BoolTensor，.float() 才变成 0.0/1.0。"
+         data-feedback-incorrect="✗ 不对。x > 0 直接返回的是 BoolTensor（True/False），不是 0/1。">
+      <h3>Q3 · PyTorch 类型</h3>
+      <p>对 <code>tensor([-1., 0., 2.])</code>，<code>(x &gt; 0)</code> 在调用 <code>.float()</code> <em>之前</em> 返回什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> tensor([0., 0., 1.])</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> tensor([False, False, True])</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> tensor([-1., 0., 1.])</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> tensor([0., 0., 2.])</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <!-- Q4 -->
+    <div class="quiz-question"
+         data-correct="C"
+         data-feedback-correct="✓ 正确！in-place 操作 x[x < 0] = 0 会破坏计算图，导致梯度错误。"
+         data-feedback-incorrect="✗ 不对。A 和 B 都是合法的无副作用实现；C 的 in-place 赋值会破坏 autograd。">
+      <h3>Q4 · 梯度陷阱</h3>
+      <p>下列哪种实现<strong>会破坏</strong> autograd 梯度计算？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> <code>return x * (x &gt; 0).float()</code></li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> <code>return torch.where(x &gt; 0, x, torch.zeros_like(x))</code></li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> <code>x[x &lt; 0] = 0; return x</code></li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 以上都不会破坏梯度</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <!-- 代码练习 -->
+  <section>
+    <h2>代码填空</h2>
+    <p>补全这行代码，不使用任何内置 relu：</p>
+
+    <div class="fill-blank"
+         data-answers="x > 0|x>0|(x > 0)|(x>0)"
+         data-hint="x > 0"
+         data-feedback-correct="✓ 完美！x * (x > 0).float() 就是最简洁的 ReLU 实现。">
+      <pre><code>def relu(x: torch.Tensor) -> torch.Tensor:
+    return x * (          ).float()
+    #           ↑ 填这里</code></pre>
+      <div class="blank-row">
+        <input class="exercise-input" type="text" placeholder="输入表达式，按 Enter 检验" spellcheck="false" autocomplete="off">
+        <button class="btn btn-primary check-btn">检验</button>
+      </div>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <!-- 参考解法 -->
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="solution-reveal">
+        ▼ 查看参考解法（先自己想想！）
+      </button>
+      <div id="solution-reveal" class="solution-reveal">
+        <pre><code>import torch
+
+def relu(x: torch.Tensor) -> torch.Tensor:
+    return x * (x > 0).float()</code></pre>
+        <div class="callout callout-ok">
+          <strong>为什么这是最佳写法？</strong><br>
+          • 简洁，一行完成<br>
+          • 不用 <code>if</code>，天然支持任意形状 tensor<br>
+          • 支持 autograd（无 in-place 操作）<br>
+          • 在面试白板上写出来，考官会满意
+        </div>
+        <p>在 Jupyter 运行验证：</p>
+        <pre><code>from torch_judge import check
+check("relu")  # 应该全部通过</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 提示 -->
+  <section>
+    <h2>面试要点总结</h2>
+    <ul>
+      <li><strong>定义</strong>：<code>ReLU(x) = max(0, x)</code>，逐元素操作</li>
+      <li><strong>实现</strong>：<code>x * (x > 0).float()</code></li>
+      <li><strong>梯度</strong>：正区间传 1，负区间传 0；通过乘法自然实现</li>
+      <li><strong>禁忌</strong>：不要 in-place 修改输入张量</li>
+      <li><strong>延伸</strong>：Leaky ReLU = <code>torch.where(x > 0, x, 0.01 * x)</code>；能写出来加分</li>
+    </ul>
+  </section>
+
+  <!-- 延伸阅读 -->
+  <section>
+    <h2>延伸阅读</h2>
+    <ul>
+      <li>
+        <a href="https://pytorch.org/docs/stable/generated/torch.nn.ReLU.html" target="_blank">
+          PyTorch 官方文档 · torch.nn.ReLU
+        </a>
+        — 看看官方实现的参数说明（<code>inplace</code> 参数）
+      </li>
+      <li>
+        <a href="http://cs231n.github.io/neural-networks-1/#actfun" target="_blank">
+          CS231n · Activation Functions
+        </a>
+        — 可视化比较各激活函数的梯度行为
+      </li>
+    </ul>
+  </section>
+
+  <!-- Ask Claude -->
+  <div class="ask-claude">
+    <strong>有疑问？</strong>
+    直接在 Claude Code 对话框问我。可以问："为什么 x[x&lt;0]=0 会破坏梯度？"，
+    "Leaky ReLU 怎么写？"，"什么是梯度消失？" 等任何不清楚的地方。
+  </div>
+
+  <!-- 导航 -->
+  <nav class="lesson-nav">
+    <div></div>
+    <a href="./0002-softmax.html">下一课：02 · Softmax →</a>
+  </nav>
+
+</div>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

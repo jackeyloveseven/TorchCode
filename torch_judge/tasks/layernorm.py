@@ -1,13 +1,13 @@
 """LayerNorm implementation task."""
 
 TASK = {
-    "title": "Implement LayerNorm",
+    "title": "实现 LayerNorm",
     "difficulty": "Medium",
     "function_name": "my_layer_norm",
-    "hint": "Normalize over the last dim: $(x - \\mu) / \\sqrt{\\sigma^2 + \\epsilon}$, then scale by $\\gamma$ and shift by $\\beta$.",
+    "hint": "在最后一维上归一化：$(x - \\mu) / \\sqrt{\\sigma^2 + \\epsilon}$，然后乘以 $\\gamma$ 并加上 $\\beta$。",
     "tests": [
         {
-            "name": "Shape and basic behavior",
+            "name": "形状与基本行为",
             "code": """
 import torch
 x = torch.randn(2, 3, 8)
@@ -20,7 +20,7 @@ assert torch.allclose(out, ref, atol=1e-4), 'Value mismatch vs F.layer_norm'
 """,
         },
         {
-            "name": "With learned parameters",
+            "name": "带可学习参数",
             "code": """
 import torch
 x = torch.randn(4, 16)
@@ -32,7 +32,7 @@ assert torch.allclose(out, ref, atol=1e-4), 'Value mismatch with non-trivial gam
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 x = torch.randn(2, 8, requires_grad=True)

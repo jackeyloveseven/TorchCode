@@ -1,13 +1,13 @@
 """KV Cache Attention task."""
 
 TASK = {
-    "title": "KV Cache Attention",
+    "title": "KV Cache 注意力",
     "difficulty": "Hard",
     "function_name": "KVCacheAttention",
-    "hint": "Project Q/K/V, reshape to (B, num_heads, S, d_k). If cache exists, concat new K/V with cached along dim=2. Apply causal mask during prefill. Return (output, (K_all, V_all)). Cache tensors: (B, num_heads, S_total, d_k).",
+    "hint": "投影 Q/K/V，重塑为 (B, num_heads, S, d_k)。若缓存存在，将新 K/V 沿 dim=2 拼接至缓存。预填充阶段应用因果掩码。返回 (output, (K_all, V_all))。缓存张量形状：(B, num_heads, S_total, d_k)。",
     "tests": [
         {
-            "name": "Output shape (no cache)",
+            "name": "输出形状（无缓存）",
             "code": """
 import torch, torch.nn as nn
 torch.manual_seed(0)
@@ -19,7 +19,7 @@ assert out.shape == (2, 8, 64), f'Output shape: {out.shape}'
 """,
         },
         {
-            "name": "Cache structure",
+            "name": "缓存结构",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -33,7 +33,7 @@ assert v_cache.shape == (2, 4, 8, 16), f'V cache shape: {v_cache.shape}, expecte
 """,
         },
         {
-            "name": "Decode step appends to cache",
+            "name": "解码步骤追加至缓存",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -49,7 +49,7 @@ assert v_cache.shape[2] == 5, f'Cache should grow: V has {v_cache.shape[2]} posi
 """,
         },
         {
-            "name": "Incremental decode matches full forward",
+            "name": "增量解码与完整前向一致",
             "code": """
 import torch
 torch.manual_seed(42)
@@ -64,7 +64,7 @@ assert torch.allclose(full_out, inc_out, atol=1e-5), 'Incremental decode must ma
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 torch.manual_seed(0)

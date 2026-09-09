@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>33 · Beam Search — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0032-topk-sampling.html">← 32 · Top-k Sampling</a><span>›</span><span>第 33 课：Beam Search</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:80.5%"></div></div>
+  <div class="progress-label">33 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 33 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>束搜索（Beam Search）</h1>
+    <p class="lesson-tagline">同时维护 beam_width 条候选序列，取累积对数概率最高的。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 Beam Search 如何在搜索空间中权衡质量与效率</li>
+      <li>掌握 beam 扩展和剪枝的步骤</li>
+      <li>能写出完整的 Beam Search 循环</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>算法步骤</h3>
+    <pre><code># 初始状态：beam = [([BOS], log_prob=0)]
+# 每步：
+# 1. 对每个 beam，计算下一个 token 的分布
+# 2. 每个 beam 扩展出 vocab_size 个候选
+# 3. 从所有 beam_width * vocab_size 个候选中
+#    保留 log_prob 最高的 beam_width 个
+# 重复直到所有 beam 生成 EOS 或达到最大长度
+
+# 关键：用 log_prob（加法），不用概率（乘法）
+# 避免连乘导致的数值下溢</code></pre>
+
+    <h3>与贪心搜索的对比</h3>
+    <table>
+      <tr><th></th><th>贪心搜索</th><th>Beam Search (k=5)</th></tr>
+      <tr><td>候选数</td><td>1</td><td>k 条</td></tr>
+      <tr><td>最优性</td><td>局部最优</td><td>近似全局最优</td></tr>
+      <tr><td>计算量</td><td>O(L)</td><td>O(k*L)</td></tr>
+      <tr><td>用途</td><td>实时对话</td><td>翻译、摘要</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def beam_search(model, input_ids, beam_width=5, max_len=50, eos_id=2):
+    # 初始化 beams：[(token_ids, log_prob)]
+    beams = [(input_ids.clone(), 0.0)]
+    completed = []
+
+    for _ in range(max_len):
+        candidates = []
+        for seq, score in beams:
+            if seq[-1].item() == eos_id:
+                completed.append((seq, score))
+                continue
+            # 模型前向：获取下一步 logits
+            logits = model(seq.unsqueeze(0))[0, -1]   # (vocab,)
+            log_probs = torch.log_softmax(logits, dim=-1)
+            # 取 top-beam_width 个候选
+            top_probs, top_ids = log_probs.topk(beam_width)
+            for lp, tid in zip(top_probs, top_ids):
+                new_seq   = torch.cat([seq, tid.unsqueeze(0)])
+                new_score = score + lp.item()
+                candidates.append((new_seq, new_score))
+
+        if not candidates:
+            break
+        # 保留得分最高的 beam_width 条
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        beams = candidates[:beam_width]
+
+    completed += beams
+    completed.sort(key=lambda x: x[1] / len(x[0]), reverse=True)  # length normalize
+    return completed[0][0]</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！beam_width=1 时，每步只保留一个候选，等价于贪心搜索（每步取 argmax）。"
+         data-feedback-incorrect="✗ 不对。beam_width=1 时，Beam Search 退化为贪心搜索（只有一条候选序列）。">
+      <h3>Q1 · 特殊情况</h3>
+      <p>beam_width=1 时，Beam Search 等价于什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 随机采样</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> Top-p 采样</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 贪心搜索（每步 argmax）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 穷举搜索</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！用 log_prob 相加而不是概率相乘，避免 0.9^50 这类极小数的数值下溢问题。"
+         data-feedback-incorrect="✗ 不对。log_prob 加法等价于概率乘法，但数值更稳定（避免 p^T → 0 的下溢）。">
+      <h3>Q2 · log 的作用</h3>
+      <p>Beam Search 用 log_prob 累加而不是 prob 相乘，原因是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 加法比乘法更快</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 概率连乘会数值下溢（非常小），log 域加法稳定</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> log_prob 更容易排序</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 方便计算梯度</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！不做长度归一化时，Beam Search 倾向于选短序列（短序列 log_prob 累加项少）。"
+         data-feedback-incorrect="✗ 不对。Beam Search 不做长度归一化时会偏向短序列（累积对数概率绝对值更小）。">
+      <h3>Q3 · 长度偏见</h3>
+      <p>不做长度归一化的 Beam Search 会有什么问题？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 偏向短序列（累积 log_prob 绝对值小）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 偏向长序列</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 无偏见，与序列长度无关</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 偏向中等长度序列</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def beam_search(model, input_ids, beam_width=5, max_len=50, eos_id=2):
+    beams = [(input_ids.clone(), 0.0)]
+    completed = []
+    for _ in range(max_len):
+        candidates = []
+        for seq, score in beams:
+            if seq[-1].item() == eos_id:
+                completed.append((seq, score)); continue
+            logits = model(seq.unsqueeze(0))[0, -1]
+            log_probs = torch.log_softmax(logits, dim=-1)
+            top_probs, top_ids = log_probs.topk(beam_width)
+            for lp, tid in zip(top_probs, top_ids):
+                candidates.append((torch.cat([seq, tid.unsqueeze(0)]),
+                                   score + lp.item()))
+        if not candidates: break
+        beams = sorted(candidates, key=lambda x: x[1], reverse=True)[:beam_width]
+    completed += beams
+    return max(completed, key=lambda x: x[1] / len(x[0]))[0]</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>算法</strong>：维护 k 条序列，每步扩展后剪枝到 k 条</li>
+      <li><strong>log_prob</strong>：用加法代替概率乘法，避免数值下溢</li>
+      <li><strong>长度归一化</strong>：<code>score / len(seq)</code>，防止偏向短序列</li>
+      <li><strong>局限</strong>：计算量 O(k*L)，仍可能错过全局最优</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："翻译任务为什么用 Beam Search 而不是采样？"，"Diverse Beam Search 是什么？"</div>
+  <nav class="lesson-nav">
+    <a href="./0032-topk-sampling.html">← 32 · Top-k Sampling</a>
+    <a href="./0034-speculative-decoding.html">下一课：34 · Speculative Decoding →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>23 · Cross Attention — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0022-conv2d.html">← 22 · Conv2D</a><span>›</span><span>第 23 课：Cross Attention</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:56.1%"></div></div>
+  <div class="progress-label">23 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 23 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>交叉注意力</h1>
+    <p class="lesson-tagline">Encoder-Decoder 桥梁：Q 来自解码器，K/V 来自编码器。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解交叉注意力与自注意力的本质区别</li>
+      <li>掌握 Q/K/V 来自不同序列的实现</li>
+      <li>理解为什么交叉注意力不需要因果掩码</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>自注意力 vs 交叉注意力</h3>
+    <table>
+      <tr><th></th><th>自注意力</th><th>交叉注意力</th></tr>
+      <tr><td>Q 来源</td><td>当前序列 x</td><td>解码器隐状态 query</td></tr>
+      <tr><td>K/V 来源</td><td>当前序列 x</td><td>编码器输出 context</td></tr>
+      <tr><td>因果掩码</td><td>解码时需要</td><td>不需要（context 全可见）</td></tr>
+      <tr><td>用途</td><td>序列内交互</td><td>跨序列信息查询</td></tr>
+    </table>
+
+    <h3>典型应用</h3>
+    <ul>
+      <li>机器翻译：解码器关注编码器的源语言表示</li>
+      <li>图像生成（Stable Diffusion）：图像特征关注文本 embedding</li>
+      <li>多模态模型：文本 token 关注视觉特征</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def cross_attention(query, context, W_q, W_k, W_v, W_o):
+    # query:   (B, S_q, D) — 解码器隐状态
+    # context: (B, S_c, D) — 编码器输出
+    B, S_q, D = query.shape
+    d_k = D
+
+    Q = W_q(query)      # (B, S_q, D)，来自解码器
+    K = W_k(context)    # (B, S_c, D)，来自编码器
+    V = W_v(context)    # (B, S_c, D)，来自编码器
+
+    scores  = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)
+    # 无因果掩码：解码器的每个位置可以看整个 context
+    weights = torch.softmax(scores, dim=-1)   # (B, S_q, S_c)
+    out = torch.bmm(weights, V)               # (B, S_q, D)
+    return W_o(out)</code></pre>
+
+    <div class="callout">
+      <strong>scores 的形状：</strong>
+      <code>(B, S_q, S_c)</code>，不是 <code>(B, S_q, S_q)</code>。
+      S_q 和 S_c 可以不同（解码器长度 ≠ 编码器长度）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！交叉注意力中 Q 来自解码器，K/V 来自编码器（context），这是与自注意力的关键区别。"
+         data-feedback-incorrect="✗ 不对。交叉注意力的 Q 来自 decoder，K 和 V 来自 encoder 的 context。">
+      <h3>Q1 · 来源</h3>
+      <p>在 Encoder-Decoder 的交叉注意力中，K 和 V 来自哪里？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 解码器的隐状态</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 编码器的输出（context）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 位置编码</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 可学习的固定参数</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！scores 形状是 (B, S_q, S_c)，每个查询位置对所有 context 位置的分数。"
+         data-feedback-incorrect="✗ 不对。交叉注意力 scores 形状是 (B, S_q, S_c)，S_q 和 S_c 可以不同。">
+      <h3>Q2 · scores 形状</h3>
+      <p>S_q=10, S_c=20，交叉注意力 scores 的形状是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> (B, 10, 10)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (B, 20, 20)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> (B, 10, 20)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> (B, 20, 10)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！交叉注意力不需要因果掩码，因为 context（编码器输出）是完整可见的，不存在未来信息泄露。"
+         data-feedback-incorrect="✗ 不对。交叉注意力的 context 是完整序列，每个 query 位置可以关注所有 context 位置，无需掩码。">
+      <h3>Q3 · 是否需要因果掩码</h3>
+      <p>交叉注意力为什么不需要因果掩码？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> context 是完整序列，没有"未来位置"的信息泄露问题</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 计算太慢，掩码省略</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 因果掩码只用于 FFN，不用于注意力</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 交叉注意力用于推理，不用于训练</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def cross_attention(query, context, W_q, W_k, W_v, W_o):
+    d_k = query.size(-1)
+    Q = W_q(query)
+    K = W_k(context)
+    V = W_v(context)
+    scores  = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)
+    weights = torch.softmax(scores, dim=-1)
+    out = torch.bmm(weights, V)
+    return W_o(out)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>区别</strong>：Q 来自 decoder，K/V 来自 encoder</li>
+      <li><strong>无因果掩码</strong>：context 全可见</li>
+      <li><strong>scores 形状</strong>：<code>(B, S_q, S_c)</code>，S_q ≠ S_c 也可以</li>
+      <li><strong>应用</strong>：T5、BART、Stable Diffusion 的 UNet</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Stable Diffusion 中交叉注意力的 Q/K/V 分别是什么？"，"交叉注意力和自注意力参数量一样吗？"</div>
+  <nav class="lesson-nav">
+    <a href="./0022-conv2d.html">← 22 · Conv2D</a>
+    <a href="./0024-rope.html">下一课：24 · RoPE →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

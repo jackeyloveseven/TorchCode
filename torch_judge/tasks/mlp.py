@@ -4,10 +4,10 @@ TASK = {
     "title": "SwiGLU MLP",
     "difficulty": "Medium",
     "function_name": "SwiGLUMLP",
-    "hint": "Three nn.Linear layers: gate_proj(d, d_ff), up_proj(d, d_ff), down_proj(d_ff, d). forward(x) = down_proj(silu(gate_proj(x)) * up_proj(x)). SiLU(x) = x * sigmoid(x).",
+    "hint": "三个 nn.Linear 层：gate_proj(d, d_ff)、up_proj(d, d_ff)、down_proj(d_ff, d)。forward(x) = down_proj(silu(gate_proj(x)) * up_proj(x))。SiLU(x) = x * sigmoid(x)。",
     "tests": [
         {
-            "name": "Parameter shapes",
+            "name": "参数形状",
             "code": """
 import torch, torch.nn as nn
 mlp = {fn}(d_model=64, d_ff=128)
@@ -21,7 +21,7 @@ assert mlp.down_proj.weight.shape == (64, 128), f'down_proj shape: {mlp.down_pro
 """,
         },
         {
-            "name": "Forward output shape",
+            "name": "前向输出形状",
             "code": """
 import torch
 mlp = {fn}(d_model=32, d_ff=64)
@@ -31,7 +31,7 @@ assert out.shape == (2, 8, 32), f'Output shape: {out.shape}'
 """,
         },
         {
-            "name": "Numerical correctness",
+            "name": "数值正确性",
             "code": """
 import torch, torch.nn.functional as F
 torch.manual_seed(0)
@@ -45,7 +45,7 @@ assert torch.allclose(out, ref, atol=1e-5), 'Output != down(silu(gate(x)) * up(x
 """,
         },
         {
-            "name": "2-D input",
+            "name": "二维输入",
             "code": """
 import torch
 mlp = {fn}(d_model=32, d_ff=64)
@@ -55,7 +55,7 @@ assert out.shape == (4, 32), f'2-D output shape: {out.shape}'
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 mlp = {fn}(d_model=32, d_ff=64)

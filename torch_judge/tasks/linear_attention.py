@@ -1,13 +1,13 @@
 """Linear Self-Attention task."""
 
 TASK = {
-    "title": "Linear Self-Attention",
+    "title": "线性自注意力",
     "difficulty": "Hard",
     "function_name": "linear_attention",
-    "hint": "Feature map: phi(x) = elu(x) + 1. Compute phi(Q) @ (phi(K)^T @ V) instead of softmax(Q @ K^T) @ V. Normalize by phi(Q) @ sum(phi(K)).",
+    "hint": "特征映射：phi(x) = elu(x) + 1。计算 phi(Q) @ (phi(K)^T @ V) 而非 softmax(Q @ K^T) @ V。用 phi(Q) @ sum(phi(K)) 归一化。",
     "tests": [
         {
-            "name": "Output shape",
+            "name": "输出形状",
             "code": """
 import torch
 out = {fn}(torch.randn(2, 8, 16), torch.randn(2, 8, 16), torch.randn(2, 8, 32))
@@ -15,7 +15,7 @@ assert out.shape == (2, 8, 32), f'Shape mismatch: {out.shape}'
 """,
         },
         {
-            "name": "No NaN or Inf",
+            "name": "无 NaN 或 Inf",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -25,7 +25,7 @@ assert not torch.isinf(out).any(), 'Inf in output'
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 Q = torch.randn(1, 4, 8, requires_grad=True)
@@ -36,7 +36,7 @@ assert Q.grad is not None and K.grad is not None and V.grad is not None, 'Missin
 """,
         },
         {
-            "name": "Runs fast on long sequences (linear complexity)",
+            "name": "长序列运行快速（线性复杂度）",
             "code": """
 import torch, time
 torch.manual_seed(0)

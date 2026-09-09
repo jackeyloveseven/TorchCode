@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>38 · GRPO Loss — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0037-dpo-loss.html">← 37 · DPO Loss</a><span>›</span><span>第 38 课：GRPO Loss</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:92.7%"></div></div>
+  <div class="progress-label">38 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 38 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>GRPO 损失</h1>
+    <p class="lesson-tagline">组内归一化优势：同一问题多个回答组成 group，优势 = 相对于组均值的奖励。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 GRPO 如何用 group 内归一化替代 value function</li>
+      <li>掌握优势（advantage）计算：<code>(r - r_mean) / r_std</code></li>
+      <li>能写出 GRPO 的策略梯度损失</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>GRPO vs PPO</h3>
+    <pre><code># PPO 需要 critic（价值函数）估计 baseline
+# GRPO：对同一问题采样 G 个回答，用组内统计作为 baseline
+
+# 对每个问题 x，采样 G 个回答：{y₁, ..., y_G}
+# 每个回答有奖励 r(y_i)
+# advantage = (r(y_i) - mean(r)) / std(r)  ← 组内归一化</code></pre>
+
+    <h3>GRPO 损失</h3>
+    <pre><code># 策略梯度（PPO clip 风格）
+r_t = exp(logp_policy - logp_ref)   # importance sampling ratio
+loss = -mean(min(r_t * A, clip(r_t, 1-ε, 1+ε) * A))</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def grpo_loss(policy_logps, ref_logps, rewards,
+              group_size, beta=0.01, clip_eps=0.2):
+    # policy_logps, ref_logps: (B*G,)  B 个问题各 G 个回答
+    # rewards: (B*G,)
+
+    # 计算组内归一化优势
+    rewards = rewards.view(-1, group_size)        # (B, G)
+    mean = rewards.mean(dim=-1, keepdim=True)
+    std  = rewards.std(dim=-1, keepdim=True) + 1e-8
+    advantages = ((rewards - mean) / std).view(-1)  # (B*G,)
+
+    # importance sampling ratio
+    log_ratios = policy_logps - ref_logps.detach()
+    ratios = log_ratios.exp()
+
+    # PPO-clip 目标
+    surr1 = ratios * advantages
+    surr2 = ratios.clamp(1 - clip_eps, 1 + clip_eps) * advantages
+    policy_loss = -torch.min(surr1, surr2).mean()
+
+    # KL 惩罚（防止偏离参考模型太远）
+    kl_penalty = (log_ratios).mean()
+    return policy_loss + beta * kl_penalty</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！GRPO 用同一问题的多个回答的组内奖励均值作为 baseline，替代 PPO 的 critic/value function。"
+         data-feedback-incorrect="✗ 不对。GRPO 的核心创新是用组内奖励的均值/标准差归一化，不需要额外的 critic 网络。">
+      <h3>Q1 · GRPO 创新</h3>
+      <p>GRPO 相比 PPO 省去了什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 参考模型（ref model）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> KL 惩罚</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> Critic（价值函数）网络</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 奖励函数</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！优势 = (r - mean_group) / std_group，表示该回答相对于同组回答的相对质量。"
+         data-feedback-incorrect="✗ 不对。GRPO 的优势是组内归一化：(r - mean) / std，用相对奖励而非绝对奖励。">
+      <h3>Q2 · 优势计算</h3>
+      <p>GRPO 的 advantage 是如何计算的？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 直接用原始奖励 r</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (r - r_group_mean) / r_group_std</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> r - baseline（固定常数）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> log(r)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！clip_eps 限制 ratio 范围在 [1-ε, 1+ε]，防止策略更新步幅过大，保持训练稳定。"
+         data-feedback-incorrect="✗ 不对。clip_eps 是 PPO 风格的裁剪，防止 ratio 过大/小导致训练不稳定。">
+      <h3>Q3 · PPO Clip</h3>
+      <p>GRPO 中 <code>clip_eps=0.2</code> 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 限制策略更新步幅，防止训练不稳定</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 限制奖励范围</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 梯度裁剪</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> dropout 概率</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def grpo_loss(policy_logps, ref_logps, rewards, group_size, beta=0.01, clip_eps=0.2):
+    rewards = rewards.view(-1, group_size)
+    adv = ((rewards - rewards.mean(-1, keepdim=True)) /
+           (rewards.std(-1, keepdim=True) + 1e-8)).view(-1)
+    log_ratios = policy_logps - ref_logps.detach()
+    ratios = log_ratios.exp()
+    surr = torch.min(ratios * adv,
+                     ratios.clamp(1-clip_eps, 1+clip_eps) * adv)
+    return -surr.mean() + beta * log_ratios.mean()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>组归一化</strong>：<code>(r - mean_g) / std_g</code>，替代 critic</li>
+      <li><strong>ratio</strong>：<code>exp(logp_policy - logp_ref)</code></li>
+      <li><strong>PPO-clip</strong>：<code>min(r*A, clip(r,1-ε,1+ε)*A)</code></li>
+      <li><strong>代表应用</strong>：DeepSeek-R1 等推理模型训练</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："GRPO 和 PPO 哪个更适合 LLM？"，"group_size 怎么选？"</div>
+  <nav class="lesson-nav">
+    <a href="./0037-dpo-loss.html">← 37 · DPO Loss</a>
+    <a href="./0039-ppo-loss.html">下一课：39 · PPO Loss →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

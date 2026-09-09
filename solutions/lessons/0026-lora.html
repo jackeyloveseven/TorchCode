@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>26 · LoRA — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0025-flash-attention.html">← 25 · Flash Attention</a><span>›</span><span>第 26 课：LoRA</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:63.4%"></div></div>
+  <div class="progress-label">26 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 26 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>LoRA 低秩适配</h1>
+    <p class="lesson-tagline">冻结预训练权重，只训练低秩矩阵 A 和 B，用 α/r 控制缩放。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 LoRA 的低秩近似思想</li>
+      <li>掌握 B@A 初始化（B=0，A=randn）</li>
+      <li>理解 α/r 缩放因子的作用</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>LoRA 公式</h3>
+    <pre><code># 预训练权重：W ∈ R^(out × in)，冻结
+# LoRA 增量：ΔW = B @ A，其中
+#   A: (r, in)，初始化为标准正态
+#   B: (out, r)，初始化为全零
+#   r ≪ min(in, out)（秩，通常 4~64）
+
+# 前向传播：
+y = (W + α/r * B @ A) @ x
+# W@x 是冻结的基础输出，B@A@x 是可训练的 delta</code></pre>
+
+    <h3>为什么 B 初始化为 0？</h3>
+    <p>初始时 <code>ΔW = B@A = 0</code>，模型行为与原始预训练模型完全一致，
+    微调从稳定的起点开始，而不是随机扰动。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class LoRALinear(nn.Module):
+    def __init__(self, in_features, out_features, r=4, alpha=16):
+        super().__init__()
+        self.r     = r
+        self.alpha = alpha
+        self.scaling = alpha / r
+
+        # 冻结的预训练权重
+        self.weight = nn.Parameter(
+            torch.randn(out_features, in_features), requires_grad=False
+        )
+        # 可训练的低秩矩阵
+        self.lora_A = nn.Parameter(torch.randn(r, in_features) * 0.02)
+        self.lora_B = nn.Parameter(torch.zeros(out_features, r))
+
+    def forward(self, x):
+        base = F.linear(x, self.weight)           # 冻结部分
+        lora = F.linear(x, self.lora_B @ self.lora_A)  # 可训练 delta
+        return base + self.scaling * lora</code></pre>
+
+    <div class="callout">
+      <strong>参数量对比：</strong>原始 W 有 out×in 个参数；LoRA 只训练 r×in + out×r = r×(in+out) 个，
+      当 r=8, in=out=4096 时，参数量是原来的 8×8192/(4096×4096) ≈ 0.4%。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！B 初始化为 0 保证初始 ΔW=B@A=0，微调从与原模型相同的点开始。"
+         data-feedback-incorrect="✗ 不对。B=0 是为了让初始 ΔW=0，训练起点与预训练模型一致。">
+      <h3>Q1 · 初始化</h3>
+      <p>LoRA 为什么将矩阵 B 初始化为全零？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 节省显存</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 加快矩阵乘法</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 保证初始 ΔW=0，微调从原始模型行为出发</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 防止梯度爆炸</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！LoRA 的可训练参数量 = r×(in+out)，大幅少于全量微调的 in×out。"
+         data-feedback-incorrect="✗ 不对。LoRA 训练 A (r×in) 和 B (out×r)，总参数量 = r*(in+out)。">
+      <h3>Q2 · 参数量</h3>
+      <p>in=1024, out=1024, r=8，LoRA 的可训练参数量是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 1024×1024 = 1,048,576</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 8×(1024+1024) = 16,384</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 8×8 = 64</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 1024×8 = 8,192</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！α/r 是缩放因子，α 固定时 r 越大，缩放越小（更保守）；r 越小，缩放越大（更激进）。"
+         data-feedback-incorrect="✗ 不对。scaling = α/r，用于平衡 LoRA 更新与基础权重的相对大小。">
+      <h3>Q3 · α/r 缩放</h3>
+      <p>LoRA 中 α=16, r=4 时的 scaling 是多少？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 4.0（α/r = 16/4）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 0.25（r/α = 4/16）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 64（α*r = 16*4）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 1.0（无缩放）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class LoRALinear(nn.Module):
+    def __init__(self, in_features, out_features, r=4, alpha=16):
+        super().__init__()
+        self.scaling = alpha / r
+        self.weight = nn.Parameter(
+            torch.randn(out_features, in_features), requires_grad=False
+        )
+        self.lora_A = nn.Parameter(torch.randn(r, in_features) * 0.02)
+        self.lora_B = nn.Parameter(torch.zeros(out_features, r))
+
+    def forward(self, x):
+        base = F.linear(x, self.weight)
+        return base + self.scaling * F.linear(x, self.lora_B @ self.lora_A)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>y = Wx + (α/r) * B@A@x</code></li>
+      <li><strong>初始化</strong>：A~N(0,0.02)，B=0（保证初始 ΔW=0）</li>
+      <li><strong>参数量</strong>：原来的 <code>r*(in+out)/(in*out)</code> ≈ 0.1-1%</li>
+      <li><strong>常用 r</strong>：4, 8, 16, 64；常用 α</strong>：= r 或 2r</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："QLoRA 和 LoRA 的区别？"，"哪些层需要加 LoRA？"</div>
+  <nav class="lesson-nav">
+    <a href="./0025-flash-attention.html">← 25 · Flash Attention</a>
+    <a href="./0027-vit-patch.html">下一课：27 · ViT Patch Embed →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

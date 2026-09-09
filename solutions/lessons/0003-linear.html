@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>03 · Linear — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0002-softmax.html">← 02 · Softmax</a><span>›</span><span>第 03 课：Linear</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:7.3%"></div></div>
+  <div class="progress-label">3 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 03 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>实现线性层</h1>
+    <p class="lesson-tagline">从零搭一个 <code>nn.Linear</code>，理解权重矩阵为什么要转置。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 <code>y = xW<sup>T</sup> + b</code> 中矩阵形状的设计逻辑</li>
+      <li>掌握 Kaiming 初始化（<code>1/√fan_in</code>）</li>
+      <li>理解 <code>requires_grad_(True)</code> 与参数更新的关系</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <p>线性层（全连接层）将输入 <code>x: (B, in)</code> 映射到输出 <code>y: (B, out)</code>：</p>
+    <code class="formula">y = x @ W<sup>T</sup> + b</code>
+    <p><strong>为什么 weight 形状是 <code>(out, in)</code> 而不是 <code>(in, out)</code>？</strong></p>
+    <p>PyTorch 约定（与 <code>nn.Linear</code> 对齐）：weight 以 <em>每个输出神经元的权重向量</em> 为行存储。
+    这样 <code>x @ W.T</code> 就是对每个输出神经元做内积。做转置的开销极小（stride trick，无内存复制）。</p>
+
+    <h3>初始化：为什么乘以 <code>1/√fan_in</code>？</h3>
+    <p>若输入 x 服从标准正态，权重随机初始化标准差为 1，则输出方差 ≈ <code>fan_in</code>，随层数累积会爆炸。
+    乘以 <code>1/√fan_in</code> 使每层输出方差约为 1，保持信号稳定传播。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math, torch
+
+class SimpleLinear:
+    def __init__(self, in_features, out_features):
+        # weight: (out, in)，转置用于前向传播
+        self.weight = torch.randn(out_features, in_features) * (1 / math.sqrt(in_features))
+        self.weight.requires_grad_(True)
+        self.bias = torch.zeros(out_features, requires_grad=True)
+
+    def forward(self, x):           # x: (B, in)
+        return x @ self.weight.T + self.bias  # (B, out)</code></pre>
+    <div class="callout">
+      <strong>关键点：</strong><code>requires_grad_(True)</code>（in-place 版）让 PyTorch 把这个张量
+      加入计算图，之后可以用 <code>.grad</code> 读取梯度并更新。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！weight 形状 (out, in)，x 形状 (B, in)，x @ W.T = (B, in) @ (in, out) = (B, out)。"
+         data-feedback-incorrect="✗ 不对。weight 是 (out, in)，需要转置才能和 x (B, in) 相乘。">
+      <h3>Q1 · 矩阵形状</h3>
+      <p><code>in=4, out=8</code> 时，<code>x @ self.weight.T</code> 做的是什么乘法？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> (B,4) @ (4,8) = (B,8)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (B,4) @ (4,8)，其中 W.T 是 (4,8)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> (B,8) @ (8,4) = (B,4)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> (8,4) @ (4,B) = (8,B)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！fan_in = in_features = weight.shape[1]。"
+         data-feedback-incorrect="✗ 不对。fan_in 是输入维度，对应 weight 的第 1 维（列数）。">
+      <h3>Q2 · 初始化</h3>
+      <p>对于 <code>weight: (out_features, in_features)</code>，<code>fan_in</code> 是哪个？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> weight.shape[0]（out_features）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> out_features + in_features</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> weight.shape[1]（in_features）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> weight.numel()</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！bias 是 (out_features,)，广播规则让它对 (B, out) 的每行都加上。"
+         data-feedback-incorrect="✗ 不对。bias 形状是 (out,)，加到 (B, out) 时沿 batch 维广播。">
+      <h3>Q3 · 偏置广播</h3>
+      <p><code>bias</code> 形状是 <code>(out_features,)</code>，加到 <code>(B, out_features)</code> 时如何工作？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 沿 batch 维广播，每行加相同的 bias</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 报错，形状不匹配</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 只加到第一行</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 自动 reshape 成 (1, out)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>代码填空</h2>
+    <div class="fill-blank" data-answers="x @ self.weight.t + self.bias|x @ self.weight.T + self.bias|return x @ self.weight.T + self.bias"
+         data-hint="x @ self.weight.T + self.bias"
+         data-feedback-correct="✓ 正确！转置 weight，加 bias。">
+      <pre><code>def forward(self, x):
+    return ____________________</code></pre>
+      <div class="blank-row">
+        <input class="exercise-input" type="text" placeholder="填完整返回表达式" spellcheck="false" autocomplete="off" style="min-width:280px">
+        <button class="btn btn-primary check-btn">检验</button>
+      </div>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>import math, torch
+
+class SimpleLinear:
+    def __init__(self, in_features, out_features):
+        self.weight = torch.randn(out_features, in_features) * (1 / math.sqrt(in_features))
+        self.weight.requires_grad_(True)
+        self.bias = torch.zeros(out_features, requires_grad=True)
+
+    def forward(self, x):
+        return x @ self.weight.T + self.bias</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>y = xW<sup>T</sup> + b</code>，weight shape <code>(out, in)</code></li>
+      <li><strong>初始化</strong>：<code>randn * 1/√fan_in</code>（Xavier uniform 的近似）</li>
+      <li><strong>梯度</strong>：<code>requires_grad_(True)</code> 让张量参与计算图</li>
+      <li><strong>延伸</strong>：Kaiming 初始化（ReLU 后）用 <code>std = √(2/fan_in)</code></li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问我："为什么 .T 是零开销？"，"Xavier 和 Kaiming 初始化的区别？"等。</div>
+  <nav class="lesson-nav">
+    <a href="./0002-softmax.html">← 02 · Softmax</a>
+    <a href="./0004-layernorm.html">下一课：04 · LayerNorm →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,13 +1,13 @@
 """Simple Linear Layer task."""
 
 TASK = {
-    "title": "Simple Linear Layer",
+    "title": "简单线性层",
     "difficulty": "Medium",
     "function_name": "SimpleLinear",
-    "hint": "y = x @ W^T + b. Initialize weight with Kaiming scaling: randn * (1/sqrt(in_features)).",
+    "hint": "y = x @ W^T + b。使用 Kaiming 缩放初始化权重：randn * (1/sqrt(in_features))。",
     "tests": [
         {
-            "name": "Weight & bias shape",
+            "name": "权重与偏置形状",
             "code": """
 import torch
 layer = {fn}(8, 4)
@@ -18,7 +18,7 @@ assert layer.bias.requires_grad, 'bias must require grad'
 """,
         },
         {
-            "name": "Forward pass",
+            "name": "前向传播",
             "code": """
 import torch
 layer = {fn}(8, 4)
@@ -30,7 +30,7 @@ assert torch.allclose(y, expected, atol=1e-5), 'Forward != x @ W^T + b'
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 layer = {fn}(8, 4)

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>31 · Gradient Accumulation — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0030-cosine-lr.html">← 30 · Cosine LR</a><span>›</span><span>第 31 课：梯度累积</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:75.6%"></div></div>
+  <div class="progress-label">31 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 31 课</span><span class="badge badge-easy">Easy</span></div>
+    <h1>梯度累积</h1>
+    <p class="lesson-tagline">显存不够时的大 batch 模拟：多步累积梯度，一次 optimizer.step。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解梯度累积模拟大 batch 的原理</li>
+      <li>掌握 <code>loss / n_accum</code> 的正确 loss 缩放方式</li>
+      <li>能写出标准的梯度累积训练循环</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>为什么要梯度累积？</h3>
+    <pre><code># 目标：用 batch_size=256 训练，但显存只能放 batch_size=32
+# 方案：累积 8 个 micro batch 的梯度 → 等效于 256
+
+# 数学等价性：
+# E[grad(256)] = E[grad(32)] * 8 / 8 = E[grad(32)]
+# 但梯度累积是连续批次的平均，有轻微差异（BN 统计等）</code></pre>
+
+    <h3>Loss 缩放的关键</h3>
+    <pre><code># 错误写法：
+loss.backward()  # 梯度 = sum(grad_i)，比 mean 大 n 倍
+optimizer.step() # 步子过大！
+
+# 正确写法：
+loss = criterion(pred, label) / n_accum  # 除以累积步数
+loss.backward()  # 梯度 = sum(grad_i) / n = mean
+optimizer.step() # 正确步长</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>n_accum = 4   # 累积 4 步 = 模拟 4x batch size
+
+optimizer.zero_grad()
+for step, (x, y) in enumerate(dataloader):
+    # 前向 + 反向（不 step）
+    pred = model(x)
+    loss = criterion(pred, y) / n_accum   # ← 关键！
+    loss.backward()   # 梯度累积在 .grad 中
+
+    if (step + 1) % n_accum == 0:
+        # 累积了 n_accum 步后，执行优化
+        optimizer.step()
+        optimizer.zero_grad()   # 清空梯度，准备下一轮</code></pre>
+
+    <div class="callout">
+      <strong>与 DDP 的关系：</strong>多卡 DDP 也是梯度累积的一种——每卡 forward 后只在 step 时 all-reduce 同步梯度。
+      梯度累积 + DDP 一起用时，还要注意 <code>model.no_sync()</code> 防止中间步骤同步（浪费通信）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！每步 loss 除以 n_accum，backward 后梯度 = sum/n_accum = mean，等效于一次大 batch 的平均梯度。"
+         data-feedback-incorrect="✗ 不对。必须每步 loss / n_accum，否则累积后梯度是 n_accum 倍的均值，步子过大。">
+      <h3>Q1 · Loss 缩放</h3>
+      <p>累积 4 步时，每步的 loss 应该如何缩放？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 乘以 4（放大梯度）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 不缩放（直接用原始 loss）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 除以 4（缩放成等效的平均梯度）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 乘以 0.1（防止梯度爆炸）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！optimizer.zero_grad() 只在每个累积周期结束后调用，中间不清空梯度（否则累积失效）。"
+         data-feedback-incorrect="✗ 不对。梯度累积期间不能调 zero_grad，只在 n_accum 步后的 step() 后才清空。">
+      <h3>Q2 · zero_grad 时机</h3>
+      <p>梯度累积时，<code>optimizer.zero_grad()</code> 应该在什么时候调用？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 每步 backward 之前</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 每 n_accum 步的 optimizer.step() 之后</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 每步 backward 之后</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 训练开始前一次，之后不需要</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！梯度累积的本质是多次 backward 的梯度加法，PyTorch 的 .grad 属性默认是累加的（每次 backward 叠加）。"
+         data-feedback-incorrect="✗ 不对。PyTorch backward 会把梯度累加到 .grad，不会自动清零，这正是梯度累积能工作的原因。">
+      <h3>Q3 · 为什么能累积</h3>
+      <p>PyTorch 为什么能"自动"累积梯度？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> backward 会累加梯度到 .grad，不自动清零</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> PyTorch 内部有缓冲区自动管理</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 每次 backward 会保存历史梯度</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 需要显式调用 grad_accum() 函数</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>n_accum = 4
+optimizer.zero_grad()
+for step, (x, y) in enumerate(dataloader):
+    pred = model(x)
+    loss = criterion(pred, y) / n_accum
+    loss.backward()
+    if (step + 1) % n_accum == 0:
+        optimizer.step()
+        optimizer.zero_grad()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>loss / n_accum</code>，累积 n 步后 step</li>
+      <li><strong>原理</strong>：backward 累加到 .grad，step 后用累积梯度更新</li>
+      <li><strong>等价性</strong>：梯度累积 ≈ 更大 batch（BatchNorm 统计除外）</li>
+      <li><strong>DDP + 累积</strong>：中间步骤用 <code>model.no_sync()</code> 避免多余的 all-reduce</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："梯度累积和大 batch 训练完全等价吗？"，"no_sync 是什么？"</div>
+  <nav class="lesson-nav">
+    <a href="./0030-cosine-lr.html">← 30 · Cosine LR</a>
+    <a href="./0032-topk-sampling.html">下一课：32 · Top-k Sampling →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

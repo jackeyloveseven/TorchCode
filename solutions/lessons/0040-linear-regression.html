@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>40 · Linear Regression — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0039-ppo-loss.html">← 39 · PPO Loss</a><span>›</span><span>第 40 课：线性回归</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:97.6%"></div></div>
+  <div class="progress-label">40 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 40 课</span><span class="badge badge-easy">Easy</span></div>
+    <h1>线性回归</h1>
+    <p class="lesson-tagline">三种实现：解析解、梯度下降、nn.Linear，理解 PyTorch 训练循环。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解线性回归的三种 PyTorch 实现方式</li>
+      <li>掌握完整的训练循环（forward → loss → backward → step）</li>
+      <li>能比较解析解和梯度下降的适用场景</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>三种实现方式</h3>
+    <pre><code># 方法 1：解析解（正规方程）
+# W = (X^T X)^{-1} X^T y
+# 优点：精确；缺点：O(D³) 矩阵求逆，D 大时慢
+
+# 方法 2：梯度下降
+# loss = MSE(X@w + b, y)
+# 每步：w -= lr * grad_w
+
+# 方法 3：nn.Linear + optimizer（推荐）
+# 利用 PyTorch autograd</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code># 方法 1：解析解
+def linear_regression_normal_eq(X, y):
+    # X: (N, D), y: (N,)
+    W = torch.linalg.lstsq(X, y).solution
+    return W
+
+# 方法 2：梯度下降（手动）
+def linear_regression_gd(X, y, lr=0.01, epochs=1000):
+    N, D = X.shape
+    w = torch.zeros(D, requires_grad=True)
+    b = torch.zeros(1, requires_grad=True)
+    for _ in range(epochs):
+        pred = X @ w + b
+        loss = ((pred - y) ** 2).mean()
+        loss.backward()
+        with torch.no_grad():
+            w -= lr * w.grad; w.grad.zero_()
+            b -= lr * b.grad; b.grad.zero_()
+    return w.detach(), b.detach()
+
+# 方法 3：nn.Linear（推荐）
+def linear_regression_nn(X, y, lr=0.01, epochs=200):
+    model     = nn.Linear(X.shape[1], 1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    for _ in range(epochs):
+        optimizer.zero_grad()
+        loss = F.mse_loss(model(X).squeeze(), y)
+        loss.backward()
+        optimizer.step()
+    return model</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！解析解需要矩阵求逆（或 lstsq），复杂度 O(D³)，特征维度很高时不可行。"
+         data-feedback-incorrect="✗ 不对。解析解精确但复杂度 O(D³)，特征数很多时不适用，梯度下降更实用。">
+      <h3>Q1 · 解析解局限</h3>
+      <p>解析解（正规方程）在什么情况下不适用？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 样本量太大时</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 损失不是 MSE 时</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 特征维度 D 很大时（矩阵求逆 O(D³)）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 数据有噪声时</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！完整训练循环：zero_grad → forward → loss → backward → step，顺序不能乱。"
+         data-feedback-incorrect="✗ 不对。正确顺序是：先清零梯度，再前向，再算 loss，再 backward，最后 step。">
+      <h3>Q2 · 训练循环顺序</h3>
+      <p>PyTorch 标准训练循环的正确顺序是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> forward → backward → zero_grad → step</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> zero_grad → forward → loss → backward → step</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> forward → zero_grad → backward → step</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> backward → forward → step → zero_grad</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！MSE = mean((pred - y)²)，衡量预测值与真实值的平均平方误差。"
+         data-feedback-incorrect="✗ 不对。MSE = mean((pred - y)²)，线性回归的标准损失函数。">
+      <h3>Q3 · MSE 定义</h3>
+      <p>Mean Squared Error (MSE) 的公式是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> mean((pred - y)²)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> mean(abs(pred - y))</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> sum((pred - y)²)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> -mean(y * log(pred))</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code># 解析解
+def normal_equation(X, y):
+    return torch.linalg.lstsq(X, y).solution
+
+# 梯度下降
+def grad_descent(X, y, lr=0.01, epochs=1000):
+    w = torch.zeros(X.shape[1], requires_grad=True)
+    b = torch.zeros(1, requires_grad=True)
+    for _ in range(epochs):
+        loss = F.mse_loss((X @ w + b).squeeze(), y)
+        loss.backward()
+        with torch.no_grad():
+            w -= lr * w.grad; w.grad.zero_()
+            b -= lr * b.grad; b.grad.zero_()
+    return w.detach(), b.detach()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>解析解</strong>：<code>lstsq(X, y)</code>，精确但 O(D³)</li>
+      <li><strong>梯度下降</strong>：<code>loss.backward() → w -= lr * grad</code></li>
+      <li><strong>训练循环</strong>：zero_grad → forward → loss → backward → step</li>
+      <li><strong>with no_grad</strong>：原地更新参数时需要，避免跟踪梯度</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："为什么要 zero_grad？"，"SGD 和 Adam 在线性回归上的差别？"</div>
+  <nav class="lesson-nav">
+    <a href="./0039-ppo-loss.html">← 39 · PPO Loss</a>
+    <a href="./0041-opd-loss.html">下一课：41 · OPD Loss →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

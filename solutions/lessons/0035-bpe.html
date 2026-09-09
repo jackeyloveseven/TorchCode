@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>35 · BPE — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0034-speculative-decoding.html">← 34 · Speculative Decoding</a><span>›</span><span>第 35 课：BPE</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:85.4%"></div></div>
+  <div class="progress-label">35 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 35 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>BPE 分词</h1>
+    <p class="lesson-tagline">统计字符对频率，不断合并最频繁的对，构建词表。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 BPE 的贪心合并策略</li>
+      <li>掌握字符对统计和合并的步骤</li>
+      <li>能手写 BPE 训练的核心循环</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>BPE 训练步骤</h3>
+    <pre><code># 初始：每个单词分成字符序列（+结尾标记）
+# "low" → ['l', 'o', 'w', '&lt;/w&gt;']
+# "lower" → ['l', 'o', 'w', 'e', 'r', '&lt;/w&gt;']
+
+# 每轮：
+# 1. 统计所有相邻字符对的频次（跨单词边界不计）
+# 2. 找到频次最高的对，将其合并
+# 3. 更新词表（合并后的子词算一个单元）
+# 重复 vocab_size - initial_chars 次</code></pre>
+
+    <h3>示例</h3>
+    <pre><code>初始：{'l o w &lt;/w&gt;': 5, 'l o w e r &lt;/w&gt;': 2, 'n e w e r &lt;/w&gt;': 6}
+第 1 轮：最频繁对 = ('e', 'r') 出现 8 次
+合并后：{'l o w &lt;/w&gt;': 5, 'l o w er &lt;/w&gt;': 2, 'n e w er &lt;/w&gt;': 6}
+第 2 轮：最频繁对 = ('w', 'er') 出现 8 次
+...</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>from collections import Counter
+
+def get_pairs(vocab):
+    pairs = Counter()
+    for word, freq in vocab.items():
+        symbols = word.split()
+        for i in range(len(symbols) - 1):
+            pairs[(symbols[i], symbols[i+1])] += freq
+    return pairs
+
+def merge_pair(pair, vocab):
+    new_vocab = {}
+    bigram = ' '.join(pair)
+    replacement = ''.join(pair)
+    for word, freq in vocab.items():
+        new_word = word.replace(bigram, replacement)
+        new_vocab[new_word] = freq
+    return new_vocab
+
+def bpe_train(corpus, num_merges):
+    # 初始化：字符级 vocab
+    vocab = Counter()
+    for word in corpus.split():
+        vocab[' '.join(list(word) + ['&lt;/w&gt;'])] += 1
+
+    merges = []
+    for _ in range(num_merges):
+        pairs = get_pairs(vocab)
+        if not pairs:
+            break
+        best = pairs.most_common(1)[0][0]
+        vocab = merge_pair(best, vocab)
+        merges.append(best)
+    return vocab, merges</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！BPE 每轮合并频次最高的字符对（贪心策略），不断减小词表的分片数。"
+         data-feedback-incorrect="✗ 不对。BPE 每轮找频次最高的相邻字符对，合并为新的子词单元。">
+      <h3>Q1 · BPE 核心操作</h3>
+      <p>BPE 的每一步做什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 拆分频次最低的子词</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 合并频次最高的相邻字符对</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 随机合并两个字符</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 删除频次最低的 token</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！BPE 平衡字符级（OOV 少但序列长）和词级（序列短但 OOV 多）分词的优缺点。"
+         data-feedback-incorrect="✗ 不对。BPE 的优势是无 OOV 问题（可分解为字符），同时高频词保持为完整子词，序列不太长。">
+      <h3>Q2 · BPE 优势</h3>
+      <p>BPE 相比纯字符级分词的主要优势是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 速度更快</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 参数量更少</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 高频词保持完整子词，序列更短，效率更高</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 支持任意语言</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！&lt;/w&gt; 标记词尾，区分 'low' 结尾的 w 和 'lower' 中间的 w，避免错误合并跨词边界。"
+         data-feedback-incorrect="✗ 不对。&lt;/w&gt; 是词尾标记，防止跨词边界合并，保证 BPE 操作在单词内进行。">
+      <h3>Q3 · &lt;/w&gt; 的作用</h3>
+      <p>BPE 中在每个词末尾添加 <code>&lt;/w&gt;</code> 标记的目的是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 标记词尾，防止合并跨越词边界</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 表示句子结束</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 提高编码效率</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 替代空格</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def get_pairs(vocab):
+    pairs = Counter()
+    for word, freq in vocab.items():
+        syms = word.split()
+        for i in range(len(syms)-1):
+            pairs[(syms[i], syms[i+1])] += freq
+    return pairs
+
+def merge_pair(pair, vocab):
+    bigram = ' '.join(pair)
+    merged = ''.join(pair)
+    return {w.replace(bigram, merged): f for w, f in vocab.items()}
+
+def bpe_train(corpus, num_merges):
+    vocab = Counter(' '.join(list(w) + ['&lt;/w&gt;']) for w in corpus.split())
+    merges = []
+    for _ in range(num_merges):
+        pairs = get_pairs(vocab)
+        if not pairs: break
+        best = pairs.most_common(1)[0][0]
+        vocab = merge_pair(best, vocab)
+        merges.append(best)
+    return vocab, merges</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>核心循环</strong>：统计对频率 → 合并最频繁对 → 重复</li>
+      <li><strong>&lt;/w&gt;</strong>：词尾标记，防止跨词合并</li>
+      <li><strong>num_merges</strong>：决定最终词表大小（初始字符数 + merges）</li>
+      <li><strong>代表应用</strong>：GPT-2（50k BPE），LLaMA（SentencePiece BPE）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："WordPiece 和 BPE 的区别？"，"Tiktoken 是怎么实现的？"</div>
+  <nav class="lesson-nav">
+    <a href="./0034-speculative-decoding.html">← 34 · Speculative Decoding</a>
+    <a href="./0036-int8-quantization.html">下一课：36 · INT8 Quantization →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

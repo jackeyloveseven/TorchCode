@@ -1,13 +1,13 @@
 """Grouped Query Attention task."""
 
 TASK = {
-    "title": "Grouped Query Attention",
+    "title": "分组查询注意力",
     "difficulty": "Hard",
     "function_name": "GroupQueryAttention",
-    "hint": "Like MHA but fewer KV heads. W_k/W_v project to num_kv_heads * d_k dims. Use repeat_interleave to expand KV heads to match Q heads.",
+    "hint": "与 MHA 类似，但 KV 头数更少。W_k/W_v 投影到 num_kv_heads * d_k 维。使用 repeat_interleave 将 KV 头扩展至与 Q 头数一致。",
     "tests": [
         {
-            "name": "Output shape",
+            "name": "输出形状",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -17,7 +17,7 @@ assert out.shape == (2, 6, 32), f'Shape mismatch: {out.shape}'
 """,
         },
         {
-            "name": "nn.Linear with correct shapes",
+            "name": "nn.Linear 形状正确",
             "code": """
 import torch, torch.nn as nn
 gqa = {fn}(d_model=32, num_heads=8, num_kv_heads=2)
@@ -29,7 +29,7 @@ assert isinstance(gqa.W_o, nn.Linear), 'W_o should be nn.Linear'
 """,
         },
         {
-            "name": "Degenerates to MHA when kv_heads == heads",
+            "name": "kv_heads == heads 时退化为 MHA",
             "code": """
 import torch
 torch.manual_seed(42)
@@ -40,7 +40,7 @@ assert gqa.W_k.weight.shape == (16, 16), 'Full KV when kv_heads == heads'
 """,
         },
         {
-            "name": "KV heads are shared correctly",
+            "name": "KV 头正确共享",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -55,7 +55,7 @@ assert not torch.equal(k_exp[:, 0], k_exp[:, 2]), 'Different groups need differe
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 torch.manual_seed(0)

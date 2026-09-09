@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>19 · GELU — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0018-embedding.html">← 18 · Embedding</a><span>›</span><span>第 19 课：GELU</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:46.3%"></div></div>
+  <div class="progress-label">19 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 19 课</span><span class="badge badge-easy">Easy</span></div>
+    <h1>GELU 激活函数</h1>
+    <p class="lesson-tagline">Transformer 的默认激活：平滑版 ReLU，用高斯 CDF 加权。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 GELU 公式：x * Φ(x)</li>
+      <li>掌握精确版和 tanh 近似版的区别</li>
+      <li>理解为什么 GELU 比 ReLU 更适合 Transformer</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>GELU 精确定义</h3>
+    <pre><code>GELU(x) = x * Φ(x)
+        = x * P(X ≤ x)   # X ~ N(0,1)
+        = 0.5 * x * (1 + erf(x / sqrt(2)))</code></pre>
+
+    <h3>tanh 近似版（GPT-2 用的）</h3>
+    <pre><code># Hendrycks 2016 论文的近似，更快
+GELU_approx(x) = 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))</code></pre>
+
+    <h3>与 ReLU 的区别</h3>
+    <table>
+      <tr><th>特征</th><th>ReLU</th><th>GELU</th></tr>
+      <tr><td>负值输出</td><td>严格 0</td><td>小负值（-0.17 左右）</td></tr>
+      <tr><td>0 处梯度</td><td>不连续</td><td>连续可微</td></tr>
+      <tr><td>死亡神经元</td><td>可能</td><td>不会（始终有梯度）</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math
+
+def gelu(x):
+    # 精确版
+    return 0.5 * x * (1.0 + torch.erf(x / math.sqrt(2)))
+
+def gelu_approx(x):
+    # GPT-2 近似版
+    return 0.5 * x * (1 + torch.tanh(
+        math.sqrt(2 / math.pi) * (x + 0.044715 * x.pow(3))
+    ))</code></pre>
+
+    <div class="callout">
+      <strong>F.gelu 默认值：</strong><code>F.gelu(x)</code> 使用精确版；
+      <code>F.gelu(x, approximate='tanh')</code> 使用 tanh 近似（GPT-2 风格）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！GELU(x) = x * Φ(x)，其中 Φ(x) 是标准正态分布的 CDF。"
+         data-feedback-incorrect="✗ 不对。GELU = x 乘以高斯 CDF，等价于 0.5x*(1+erf(x/√2))。">
+      <h3>Q1 · GELU 公式</h3>
+      <p>GELU(x) 等于？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> max(0, x)（ReLU）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> x * P(X≤x)，X~N(0,1)（高斯 CDF 加权）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> x * sigmoid(x)（SiLU）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> tanh(x)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！GELU 的精确实现用 erf 函数（高斯误差函数）。"
+         data-feedback-incorrect="✗ 不对。GELU 精确版用 torch.erf，近似版才用 tanh。">
+      <h3>Q2 · 精确实现</h3>
+      <p>GELU 精确版的核心函数是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> torch.tanh</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> torch.sigmoid</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> torch.erf</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> torch.exp</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！GELU 在负值区域有小负输出（约 -0.17），不会产生死亡神经元。"
+         data-feedback-incorrect="✗ 不对。GELU 对负输入有微小负输出，梯度不为 0，避免了 ReLU 死亡问题。">
+      <h3>Q3 · GELU vs ReLU</h3>
+      <p>GELU 相比 ReLU 的主要优势是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 负值区域有小梯度，避免死亡神经元</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 计算速度更快</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 输出范围严格限定在 [-1, 1]</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 内存占用更小</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def gelu(x):
+    return 0.5 * x * (1.0 + torch.erf(x / math.sqrt(2.0)))
+
+# GPT-2 tanh 近似版：
+def gelu_approx(x):
+    return 0.5 * x * (1 + torch.tanh(
+        math.sqrt(2 / math.pi) * (x + 0.044715 * x.pow(3))
+    ))</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>精确版</strong>：<code>0.5 * x * (1 + erf(x/√2))</code></li>
+      <li><strong>近似版</strong>：tanh 近似，GPT-2 使用</li>
+      <li><strong>与 ReLU 区别</strong>：负值有梯度，光滑连续</li>
+      <li><strong>用于</strong>：BERT、GPT-2（GELU）；LLaMA（SiLU/SwiGLU）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："GELU 和 SiLU 的实际性能差别？"，"为什么激活函数要平滑？"</div>
+  <nav class="lesson-nav">
+    <a href="./0018-embedding.html">← 18 · Embedding</a>
+    <a href="./0020-weight-init.html">下一课：20 · Weight Init →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

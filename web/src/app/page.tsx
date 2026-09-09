@@ -61,6 +61,8 @@ export default function Home() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 
+  const DIFFICULTY_ZH: Record<string, string> = { Easy: '简单', Medium: '中等', Hard: '困难' };
+
   const handleEditorMount: OnMount = (editorInstance) => {
     editorRef.current = editorInstance;
   };
@@ -137,7 +139,7 @@ export default function Home() {
       console.error("Submission failed", err);
       setResults({
         success: false,
-        error: "Failed to connect to backend engine.",
+        error: "无法连接后端引擎。",
         passed: 0,
         total: 0,
         total_time_ms: 0,
@@ -174,7 +176,7 @@ export default function Home() {
               className="flex items-center justify-between w-[22rem] bg-[#3c3c3c] hover:bg-[#4c4c4c] transition-colors text-white px-4 py-2 rounded-md outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer font-medium"
             >
               <span className="truncate pr-4 text-left flex-1">
-                {taskDetails ? `${taskDetails.title} (${taskDetails.difficulty})` : 'Select a problem...'}
+                {taskDetails ? `${taskDetails.title} (${DIFFICULTY_ZH[taskDetails.difficulty] ?? taskDetails.difficulty})` : '选择题目...'}
               </span>
               <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -187,9 +189,9 @@ export default function Home() {
                 ></div>
                 <div className="absolute top-full left-0 mt-2 w-96 max-h-[70vh] overflow-y-auto bg-[#2d2d2d] border border-[#404040] rounded-md shadow-2xl z-50 py-2">
                   {[
-                    { label: '🟢 Easy', diff: 'Easy' },
-                    { label: '🟡 Medium', diff: 'Medium' },
-                    { label: '🔴 Hard', diff: 'Hard' }
+                    { label: '🟢 简单', diff: 'Easy' },
+                    { label: '🟡 中等', diff: 'Medium' },
+                    { label: '🔴 困难', diff: 'Hard' }
                   ].map((group) => {
                     const groupTasks = tasks.filter(t => t.difficulty === group.diff);
                     if (groupTasks.length === 0) return null;
@@ -229,7 +231,7 @@ export default function Home() {
             className="flex items-center px-4 py-2 rounded-md bg-[#3c3c3c] hover:bg-[#4c4c4c] transition-colors"
           >
             <RotateCcw className="w-4 h-4 mr-2" />
-            Reset
+            重置
           </button>
           <button 
             onClick={handleRunCode}
@@ -241,7 +243,7 @@ export default function Home() {
             ) : (
               <Play className="w-4 h-4 mr-2 fill-current" />
             )}
-            Run Tests
+            运行测试
           </button>
         </div>
       </nav>
@@ -261,13 +263,13 @@ export default function Home() {
               className={`px-6 py-3 font-medium transition-colors ${activeTab === 'problem' ? 'text-white border-b-2 border-orange-500 bg-[#1e1e1e]' : 'text-gray-400 hover:text-gray-200'}`}
               onClick={() => setActiveTab('problem')}
             >
-              Problem
+              题目
             </button>
             <button 
               className={`px-6 py-3 font-medium transition-colors ${activeTab === 'results' ? 'text-white border-b-2 border-green-500 bg-[#1e1e1e]' : 'text-gray-400 hover:text-gray-200'}`}
               onClick={() => setActiveTab('results')}
             >
-              Test Results
+              测试结果
               {results && (
                 <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${results.success ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'}`}>
                   {results.passed}/{results.total}
@@ -284,15 +286,15 @@ export default function Home() {
                     <h1 className="text-2xl font-semibold mb-4 text-white">{taskDetails.title}</h1>
                     <div className="flex items-center space-x-4 mb-6">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium 
-                        ${taskDetails.difficulty === 'Easy' ? 'bg-[#2c4034] text-[#2cbb5d]' : 
-                          taskDetails.difficulty === 'Medium' ? 'bg-[#403622] text-[#ffc01e]' : 
+                        ${taskDetails.difficulty === 'Easy' ? 'bg-[#2c4034] text-[#2cbb5d]' :
+                          taskDetails.difficulty === 'Medium' ? 'bg-[#403622] text-[#ffc01e]' :
                           'bg-[#402a2a] text-[#ef4743]'}`}>
-                        {taskDetails.difficulty}
+                        {DIFFICULTY_ZH[taskDetails.difficulty] ?? taskDetails.difficulty}
                       </span>
                       {selectedTaskId && solvedTasks[selectedTaskId] && (
                         <div className="flex items-center text-[#2cbb5d] text-sm font-medium">
                           <Check className="w-4 h-4 mr-1" strokeWidth={3} />
-                          Solved
+                          已解决
                         </div>
                       )}
                     </div>
@@ -306,7 +308,7 @@ export default function Home() {
                       <div className="mt-8 border-t border-[#404040] pt-6">
                         <details className="group">
                           <summary className="flex items-center cursor-pointer list-none font-medium text-gray-300 hover:text-white transition-colors">
-                            <span className="mr-2">💡</span> Hint
+                            <span className="mr-2">💡</span> 提示
                             <ChevronDown className="w-4 h-4 ml-auto group-open:rotate-180 transition-transform" />
                           </summary>
                           <div className="mt-4 text-gray-400 text-sm pl-6 border-l-2 border-[#404040] py-1 markdown-body bg-transparent">
@@ -322,25 +324,25 @@ export default function Home() {
                     )}
                   </>
                 ) : (
-                  <div className="text-gray-500">Loading problem...</div>
+                  <div className="text-gray-500">加载题目中...</div>
                 )}
               </div>
             ) : (
               <div className="results-pane">
                 {isSubmitting ? (
                   <div className="flex items-center justify-center h-full text-gray-400">
-                    Executing PyTorch code...
+                    正在执行 PyTorch 代码...
                   </div>
                 ) : results ? (
                   <div className="space-y-6">
                     <div className={`text-2xl font-bold ${results.success ? 'text-green-400' : 'text-red-400'}`}>
-                      {results.success ? "Accepted" : "Wrong Answer"}
+                      {results.success ? "通过" : "答案错误"}
                     </div>
 
                     {results.error && (
                       <div className="p-4 bg-red-900/30 border border-red-900 rounded-lg text-red-300">
                         <div className="font-semibold mb-2 flex items-center">
-                          <AlertCircle className="w-5 h-5 mr-2" /> Error
+                          <AlertCircle className="w-5 h-5 mr-2" /> 错误
                         </div>
                         <pre className="whitespace-pre-wrap text-sm">{results.error}</pre>
                         {results.traceback && (
@@ -351,7 +353,7 @@ export default function Home() {
 
                     {results.tests && results.tests.length > 0 && (
                       <div className="space-y-4">
-                        <h3 className="text-lg font-medium text-gray-200 border-b border-gray-700 pb-2">Test Cases</h3>
+                        <h3 className="text-lg font-medium text-gray-200 border-b border-gray-700 pb-2">测试用例</h3>
                         {results.tests.map((test, idx) => (
                           <div key={idx} className="bg-[#2d2d2d] rounded-lg border border-[#404040] overflow-hidden">
                             <div className="flex items-center justify-between p-4 bg-[#333333]">
@@ -361,7 +363,7 @@ export default function Home() {
                                 ) : (
                                   <X className="w-5 h-5 text-red-500" />
                                 )}
-                                <span className="font-medium text-gray-200">Case {idx + 1}: {test.name}</span>
+                                <span className="font-medium text-gray-200">用例 {idx + 1}: {test.name}</span>
                               </div>
                               <span className="text-xs text-gray-500">{test.time_ms.toFixed(1)}ms</span>
                             </div>
@@ -372,7 +374,7 @@ export default function Home() {
                                 <details className="group">
                                   <summary className="flex items-center cursor-pointer list-none text-xs font-medium text-gray-400 hover:text-gray-200 px-4 py-2 bg-[#2a2a2a] transition-colors">
                                     <ChevronDown className="w-3 h-3 mr-2 group-open:rotate-180 transition-transform" />
-                                    Test Source Code
+                                    测试源码
                                   </summary>
                                   <div className="bg-[#1e1e1e] p-4 text-xs font-mono text-gray-300 overflow-x-auto">
                                     <pre>{test.code}</pre>
@@ -396,7 +398,7 @@ export default function Home() {
                             {/* Stdout / Stderr for specific test if any */}
                             {test.stdout && (
                               <div className="p-4 border-t border-[#404040]">
-                                <div className="text-xs text-gray-400 mb-1">Standard Output</div>
+                                <div className="text-xs text-gray-400 mb-1">标准输出</div>
                                 <pre className="text-xs text-gray-300 bg-[#1e1e1e] p-2 rounded">{test.stdout}</pre>
                               </div>
                             )}
@@ -408,7 +410,7 @@ export default function Home() {
                     {/* Global Stdout */}
                     {results.stdout && (
                       <div>
-                        <h3 className="text-lg font-medium text-gray-200 border-b border-gray-700 pb-2 mb-3">Global Output</h3>
+                        <h3 className="text-lg font-medium text-gray-200 border-b border-gray-700 pb-2 mb-3">全局输出</h3>
                         <pre className="p-4 bg-[#2d2d2d] rounded-lg text-sm font-mono overflow-x-auto border border-[#404040]">
                           {results.stdout}
                         </pre>
@@ -418,7 +420,7 @@ export default function Home() {
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-gray-500 space-y-4 mt-20">
                     <Play className="w-16 h-16 text-[#333333]" />
-                    <p>Run your code to see results here.</p>
+                    <p>运行代码后在此查看结果。</p>
                   </div>
                 )}
               </div>

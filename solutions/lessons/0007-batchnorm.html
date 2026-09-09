@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>07 · BatchNorm — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0006-multihead-attention.html">← 06 · MultiHead</a><span>›</span><span>第 07 课：BatchNorm</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:17.1%"></div></div>
+  <div class="progress-label">7 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 07 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>实现 BatchNorm</h1>
+    <p class="lesson-tagline">训练用批统计量，推理用滑动统计量——两种模式必须分开处理。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解训练模式和推理模式的差异</li>
+      <li>掌握滑动均值/方差的 in-place 更新方式</li>
+      <li>理解 BatchNorm 在 dim=0（批次维）归一化</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <code class="formula">BN(x) = γ · (x − μ_B) / √(σ_B² + ε) + β</code>
+
+    <h3>训练 vs 推理</h3>
+    <table>
+      <tr><th></th><th>训练</th><th>推理</th></tr>
+      <tr><td>均值/方差来源</td><td>当前 batch（dim=0）</td><td>滑动均值/方差</td></tr>
+      <tr><td>更新 running stats</td><td>是（momentum 加权）</td><td>否</td></tr>
+      <tr><td>归一化后</td><td>数值更稳定</td><td>行为确定性</td></tr>
+    </table>
+
+    <h3>滑动统计量更新</h3>
+    <pre><code># momentum=0.1 默认值（PyTorch 约定）
+running_mean = (1 - momentum) * running_mean + momentum * batch_mean
+running_var  = (1 - momentum) * running_var  + momentum * batch_var</code></pre>
+    <p>注意这是 in-place 更新（<code>running_mean</code> 是传入的张量，直接修改它的值）。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def my_batch_norm(x, gamma, beta, running_mean, running_var,
+                  eps=1e-5, momentum=0.1, training=True):
+    if training:
+        batch_mean = x.mean(dim=0)                    # (C,)
+        batch_var  = x.var(dim=0, unbiased=False)     # (C,)
+        # in-place 更新滑动统计量
+        running_mean.mul_(1 - momentum).add_(momentum * batch_mean.detach())
+        running_var.mul_(1 - momentum).add_(momentum * batch_var.detach())
+        mean, var = batch_mean, batch_var
+    else:
+        mean, var = running_mean, running_var
+
+    x_norm = (x - mean) / torch.sqrt(var + eps)
+    return gamma * x_norm + beta</code></pre>
+
+    <div class="callout callout-warn">
+      <strong>关键：</strong>更新 running stats 时需要 <code>.detach()</code>，
+      防止把 running_mean/var 引入计算图（它们不需要梯度）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！BatchNorm 在 dim=0（批次维）计算统计量，每个通道独立归一化。"
+         data-feedback-incorrect="✗ 不对。BatchNorm 在 batch 维（dim=0）计算，统计整个 batch 的均值方差。">
+      <h3>Q1 · 归一化维度</h3>
+      <p>输入 <code>(B, C)</code>，BatchNorm 在哪个维度计算均值和方差？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> dim=0（B，每通道跨样本统计）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> dim=1（C，每样本跨通道统计）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> dim=-1（最后维度）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 所有维度</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！推理时用 running_mean/var（不随当前输入变化），保证推理结果确定性。"
+         data-feedback-incorrect="✗ 不对。推理时必须用训练阶段积累的滑动统计量，不能用当前 batch。">
+      <h3>Q2 · 推理模式</h3>
+      <p>推理（<code>training=False</code>）时为什么不用当前 batch 的统计量？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 推理时 batch_size=1，方差为 0</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 推理时 batch 可能很小甚至为 1，统计量不稳定；需要确定性结果</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 推理时不允许计算梯度</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> running stats 比 batch stats 更精确</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！momentum=0.1 时，running_mean = 0.9 * old + 0.1 * batch_mean，滑动平均。"
+         data-feedback-incorrect="✗ 不对。PyTorch BatchNorm 的 momentum 是新统计量的权重，不是旧统计量的。">
+      <h3>Q3 · momentum 语义</h3>
+      <p><code>momentum=0.1</code> 更新公式是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> running = 0.1 * old + 0.9 * batch</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> running = old + 0.1 * (batch - old)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> running = 0.9 * old + 0.1 * batch</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> running = 0.1 * batch（直接替换）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def my_batch_norm(x, gamma, beta, running_mean, running_var,
+                  eps=1e-5, momentum=0.1, training=True):
+    if training:
+        batch_mean = x.mean(dim=0)
+        batch_var  = x.var(dim=0, unbiased=False)
+        running_mean.mul_(1 - momentum).add_(momentum * batch_mean.detach())
+        running_var.mul_(1 - momentum).add_(momentum * batch_var.detach())
+        mean, var = batch_mean, batch_var
+    else:
+        mean, var = running_mean, running_var
+    x_norm = (x - mean) / torch.sqrt(var + eps)
+    return gamma * x_norm + beta</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>训练</strong>：用 batch mean/var，in-place 更新 running stats</li>
+      <li><strong>推理</strong>：用 running mean/var，不更新</li>
+      <li><strong>detach()</strong>：更新 running stats 时避免引入计算图</li>
+      <li><strong>vs LayerNorm</strong>：BatchNorm 归一化 dim=0，LayerNorm 归一化 dim=-1</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："BatchNorm 在小 batch 下为什么不稳定？"，"GroupNorm 是什么？"</div>
+  <nav class="lesson-nav">
+    <a href="./0006-multihead-attention.html">← 06 · MultiHead</a>
+    <a href="./0008-rmsnorm.html">下一课：08 · RMSNorm →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

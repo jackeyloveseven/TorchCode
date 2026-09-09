@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>29 · Adam — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0028-moe.html">← 28 · MoE</a><span>›</span><span>第 29 课：Adam</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:70.7%"></div></div>
+  <div class="progress-label">29 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 29 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>Adam 优化器</h1>
+    <p class="lesson-tagline">一阶矩 + 二阶矩 + 偏差修正：深度学习的默认优化器。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 Adam 的两个 moment（动量 + 自适应学习率）</li>
+      <li>掌握偏差修正（bias correction）的必要性</li>
+      <li>能手写 Adam 的完整 step 函数</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>Adam 算法（每步）</h3>
+    <pre><code># 超参：lr, β₁=0.9, β₂=0.999, ε=1e-8
+# 状态：m（一阶矩，动量），v（二阶矩，梯度平方均值）
+
+t += 1
+g = param.grad
+
+# 更新 moments（EMA）
+m = β₁ * m + (1 - β₁) * g     # 一阶矩（梯度方向）
+v = β₂ * v + (1 - β₂) * g²    # 二阶矩（梯度幅度²）
+
+# 偏差修正（初始 m,v=0 导致偏小）
+m_hat = m / (1 - β₁^t)
+v_hat = v / (1 - β₂^t)
+
+# 参数更新
+param -= lr * m_hat / (sqrt(v_hat) + ε)</code></pre>
+
+    <h3>为什么要偏差修正？</h3>
+    <pre><code># 初始 m=v=0，第一步后：
+# m = 0.9*0 + 0.1*g = 0.1*g  → 远小于真实 g
+# 不修正：用的是 0.1g，步子太小
+# 修正：m_hat = 0.1g / (1-0.9) = g，正常</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class Adam:
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8):
+        self.params = list(params)
+        self.lr     = lr
+        self.beta1, self.beta2 = betas
+        self.eps = eps
+        self.t   = 0
+        # 为每个参数初始化 moment
+        self.m = [torch.zeros_like(p) for p in self.params]
+        self.v = [torch.zeros_like(p) for p in self.params]
+
+    def step(self):
+        self.t += 1
+        for i, p in enumerate(self.params):
+            if p.grad is None:
+                continue
+            g = p.grad.data
+            self.m[i] = self.beta1 * self.m[i] + (1 - self.beta1) * g
+            self.v[i] = self.beta2 * self.v[i] + (1 - self.beta2) * g.pow(2)
+            m_hat = self.m[i] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[i] / (1 - self.beta2 ** self.t)
+            p.data -= self.lr * m_hat / (v_hat.sqrt() + self.eps)
+
+    def zero_grad(self):
+        for p in self.params:
+            if p.grad is not None:
+                p.grad.zero_()</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！二阶矩 v 存储梯度平方的 EMA，开根号后作为自适应分母，大梯度参数步子自动缩小。"
+         data-feedback-incorrect="✗ 不对。v 是梯度平方的 EMA，相当于对每个参数估计梯度幅度，做自适应步长。">
+      <h3>Q1 · 二阶矩</h3>
+      <p>Adam 的二阶矩 v 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 梯度的 EMA（动量）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 梯度平方的 EMA，提供自适应步长</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 参数本身的 EMA</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 梯度的符号（方向信息）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！β₁=0.9, t=1 时，1-β₁^t = 0.1，m_hat = 0.1g/0.1 = g，修正到真实梯度量级。"
+         data-feedback-incorrect="✗ 不对。偏差修正除以 (1-β^t)，第一步 t=1，β₁^1=0.9，分母=0.1，放大 10 倍恢复真实估计。">
+      <h3>Q2 · 偏差修正</h3>
+      <p>为什么 Adam 需要偏差修正（bias correction）？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 防止学习率太大导致发散</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 稳定批归一化的统计量</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 初始 m=v=0，早期 EMA 偏小，修正补偿</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 防止 v 为 0 时除零</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！Adam 每个参数有独立的 m 和 v，显存是参数量的 3 倍（参数+m+v），AdamW 也一样。"
+         data-feedback-incorrect="✗ 不对。Adam 为每个参数维护 m 和 v 两个状态，总显存 = 参数量 × 3（参数本身+两个矩）。">
+      <h3>Q3 · Adam 显存</h3>
+      <p>Adam 相比 SGD 额外的显存开销是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 参数量的 2 倍（m 和 v 各一份）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 无额外开销</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 参数量的 4 倍</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 固定 1MB，与参数量无关</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class Adam:
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8):
+        self.params = list(params)
+        self.lr, self.eps, self.t = lr, eps, 0
+        self.beta1, self.beta2 = betas
+        self.m = [torch.zeros_like(p) for p in self.params]
+        self.v = [torch.zeros_like(p) for p in self.params]
+
+    def step(self):
+        self.t += 1
+        for i, p in enumerate(self.params):
+            if p.grad is None: continue
+            g = p.grad.data
+            self.m[i] = self.beta1 * self.m[i] + (1 - self.beta1) * g
+            self.v[i] = self.beta2 * self.v[i] + (1 - self.beta2) * g.pow(2)
+            m_hat = self.m[i] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[i] / (1 - self.beta2 ** self.t)
+            p.data -= self.lr * m_hat / (v_hat.sqrt() + self.eps)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>p -= lr * m_hat / (sqrt(v_hat) + ε)</code></li>
+      <li><strong>偏差修正</strong>：<code>/(1 - β^t)</code>，t 越大修正越小趋近于 1</li>
+      <li><strong>默认超参</strong>：β₁=0.9, β₂=0.999, ε=1e-8, lr=1e-3</li>
+      <li><strong>AdamW</strong>：Adam + 权重衰减直接作用于参数（<code>p -= wd*p</code>），不通过梯度</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Adam 和 AdamW 的区别？"，"为什么 LLM 训练偏好 AdamW？"</div>
+  <nav class="lesson-nav">
+    <a href="./0028-moe.html">← 28 · MoE</a>
+    <a href="./0030-cosine-lr.html">下一课：30 · Cosine LR →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

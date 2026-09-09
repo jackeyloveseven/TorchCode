@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>39 · PPO Loss — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0038-grpo-loss.html">← 38 · GRPO Loss</a><span>›</span><span>第 39 课：PPO Loss</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:95.1%"></div></div>
+  <div class="progress-label">39 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 39 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>PPO 损失</h1>
+    <p class="lesson-tagline">截断替代目标：min(r*A, clip(r)*A)，防止策略更新过大。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 PPO-Clip 截断目标的动机</li>
+      <li>掌握 ratio = π_new/π_old 的计算</li>
+      <li>能手写 PPO 的 clipped surrogate objective</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>PPO 的问题背景</h3>
+    <pre><code># 策略梯度基本形式：
+# loss = -E[log π(a|s) * A]  (朴素)
+# 问题：一步更新太大 → 策略崩溃
+
+# PPO 用重要性采样比率衡量更新量：
+# ratio r_t = π_new(a_t|s_t) / π_old(a_t|s_t)
+#           = exp(logp_new - logp_old)
+# r_t > 1 → 新策略更喜欢这个动作
+# r_t < 1 → 新策略不太喜欢</code></pre>
+
+    <h3>截断目标（PPO-Clip）</h3>
+    <pre><code>L_clip = -E[min(r_t * A_t, clip(r_t, 1-ε, 1+ε) * A_t)]
+# A_t > 0（好动作）：限制最大提升 → 不能过于激进
+# A_t < 0（坏动作）：限制最大降低 → 不过快惩罚</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def ppo_loss(log_probs_new, log_probs_old, advantages,
+             clip_eps=0.2, value_coef=0.5, entropy_coef=0.01):
+    # log_probs: (B,) 各时间步的 log π(a|s)
+    # advantages: (B,) 优势函数估计（已归一化）
+
+    ratios = (log_probs_new - log_probs_old.detach()).exp()
+
+    # PPO-Clip 策略损失
+    surr1 = ratios * advantages
+    surr2 = ratios.clamp(1 - clip_eps, 1 + clip_eps) * advantages
+    policy_loss = -torch.min(surr1, surr2).mean()
+
+    return policy_loss</code></pre>
+
+    <div class="callout">
+      <strong>完整 PPO：</strong>除策略损失外，还有 value loss（MSE，让 critic 准确预测回报）
+      和 entropy bonus（鼓励探索）。总损失 = policy_loss + c1*value_loss - c2*entropy。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！ratio = π_new(a)/π_old(a) = exp(logp_new - logp_old)，衡量两个策略对同一动作的概率比。"
+         data-feedback-incorrect="✗ 不对。ratio = π_new/π_old，在 log 域是 exp(logp_new - logp_old)。">
+      <h3>Q1 · Ratio 计算</h3>
+      <p>PPO 中 ratio r_t 的计算公式是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> log_new - log_old</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> exp(log_new - log_old)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> log_new / log_old</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> softmax(log_new - log_old)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！min(surr1, surr2) 取两个目标的最小值：surr2 截断了过大的 ratio，两者取 min 得到更保守的目标。"
+         data-feedback-incorrect="✗ 不对。min(r*A, clip(r)*A) 的 min 是取两个 surrogate 的较小值，形成悲观下界。">
+      <h3>Q2 · Clip 的含义</h3>
+      <p><code>min(r*A, clip(r, 1-ε, 1+ε)*A)</code> 中 <code>min</code> 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 取较大值（乐观估计）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 只使用截断后的 ratio</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 取悲观下界（防止 A>0 时过度优化，A<0 时过度惩罚）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 用于数值稳定性</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！PPO 完整损失 = policy_loss + c1*value_loss - c2*entropy_bonus，entropy 项鼓励探索（负号因为 loss 最小化）。"
+         data-feedback-incorrect="✗ 不对。完整 PPO 包含三项：策略梯度损失 + value 损失 - entropy 奖励（鼓励探索）。">
+      <h3>Q3 · 完整 PPO</h3>
+      <p>除策略损失外，PPO 还包含哪些损失项？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> Value 损失（Critic）+ Entropy bonus（鼓励探索）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 只有策略损失（无其他项）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> KL 散度（固定权重）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> L2 正则化</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def ppo_loss(log_probs_new, log_probs_old, advantages, clip_eps=0.2):
+    ratios = (log_probs_new - log_probs_old.detach()).exp()
+    surr1 = ratios * advantages
+    surr2 = ratios.clamp(1 - clip_eps, 1 + clip_eps) * advantages
+    return -torch.min(surr1, surr2).mean()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>ratio</strong>：<code>exp(logp_new - logp_old)</code></li>
+      <li><strong>clip</strong>：<code>clamp(ratio, 1-ε, 1+ε)</code>，限制更新幅度</li>
+      <li><strong>min</strong>：两个 surrogate 取最小，悲观下界</li>
+      <li><strong>完整损失</strong>：policy + c1*value - c2*entropy</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："PPO 和 TRPO 的区别？"，"ε=0.2 是怎么选的？"</div>
+  <nav class="lesson-nav">
+    <a href="./0038-grpo-loss.html">← 38 · GRPO Loss</a>
+    <a href="./0040-linear-regression.html">下一课：40 · Linear Regression →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

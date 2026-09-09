@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>41 · OPD Loss — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0040-linear-regression.html">← 40 · Linear Regression</a><span>›</span><span>第 41 课：OPD Loss</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:100%"></div></div>
+  <div class="progress-label">41 / 41 题 🎉</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 41 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>OPD 损失（加权反向 KL）</h1>
+    <p class="lesson-tagline">Optimal Policy Distillation：用反向 KL + 质量权重，蒸馏优质大模型。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 OPD 的问题背景：策略蒸馏</li>
+      <li>掌握反向 KL 散度 KL(student||teacher) 的实现</li>
+      <li>理解质量权重 w(y) 的作用</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>OPD 的思路</h3>
+    <pre><code># 目标：蒸馏一个优秀大模型（teacher）到小模型（student）
+# 普通 SFT：直接最大化 teacher 的输出似然
+# 问题：teacher 的次优回答也被学习
+
+# OPD 洞察：加权反向 KL，质量高的样本权重大
+# L_OPD = E_{y~p_teacher}[w(y) * KL(student || teacher)]
+# 其中 w(y) = r(y) / Z（奖励归一化权重）</code></pre>
+
+    <h3>反向 KL vs 正向 KL</h3>
+    <table>
+      <tr><th></th><th>正向 KL(teacher||student)</th><th>反向 KL(student||teacher)</th></tr>
+      <tr><td>优化方向</td><td>student 覆盖 teacher 所有模式</td><td>student 专注于 teacher 的主要模式</td></tr>
+      <tr><td>行为</td><td>mean-seeking（扩散）</td><td>mode-seeking（聚焦）</td></tr>
+      <tr><td>用途</td><td>普通蒸馏</td><td>偏好对齐蒸馏</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def opd_loss(student_logps, teacher_logps, rewards, beta=0.1):
+    # student_logps, teacher_logps: (B,) 序列的 log-likelihood
+    # rewards: (B,) 奖励分数
+
+    # 质量权重（softmax over rewards）
+    weights = torch.softmax(rewards / beta, dim=0)   # (B,)
+
+    # 反向 KL(student || teacher) = student_logp - teacher_logp
+    # E_student[log π_student / π_teacher]
+    # 在样本级别近似：
+    kl_per_sample = student_logps - teacher_logps    # log ratio
+
+    # 加权平均
+    loss = (weights * kl_per_sample).sum()
+    return loss</code></pre>
+
+    <div class="callout">
+      <strong>与 DPO 的联系：</strong>OPD 可以看作 DPO 的连续版本：
+      DPO 用 binary 偏好（chosen/rejected），OPD 用连续奖励分数作为权重，
+      更细粒度地区分不同质量的样本。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！反向 KL(student||teacher) 是 mode-seeking，student 会聚焦于 teacher 概率大的模式，避免 hallucination。"
+         data-feedback-incorrect="✗ 不对。反向 KL 是 mode-seeking，student 专注于 teacher 的主要模式，而非覆盖所有模式。">
+      <h3>Q1 · 反向 KL 特性</h3>
+      <p>KL(student||teacher) 的"mode-seeking"意味着？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> student 尽量覆盖 teacher 的所有模式</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> student 专注于 teacher 概率高的区域，忽略低概率区域</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> student 和 teacher 完全相同</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> student 避开 teacher 的主要模式</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！质量权重让高奖励样本的梯度更大，模型更多从优质样本学习，不被低质量样本干扰。"
+         data-feedback-incorrect="✗ 不对。weights = softmax(r/β) 让奖励高的样本权重大，使 loss 更关注高质量样本。">
+      <h3>Q2 · 质量权重</h3>
+      <p>OPD 中 <code>weights = softmax(rewards/β)</code> 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 归一化 loss 防止数值问题</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 随机选择训练样本</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 让高奖励样本贡献更大梯度，聚焦优质样本学习</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 替代 KL 散度的计算</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！OPD 用连续奖励权重，DPO 用 binary 偏好（chosen/rejected）；OPD 是 DPO 的细粒度推广。"
+         data-feedback-incorrect="✗ 不对。OPD 与 DPO 的主要区别在于奖励的粒度：连续分数 vs binary 偏好。">
+      <h3>Q3 · OPD vs DPO</h3>
+      <p>OPD 和 DPO 的最主要区别是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> OPD 用连续奖励权重，DPO 用 binary 偏好（chosen/rejected）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> OPD 不需要参考模型，DPO 需要</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> OPD 用于训练，DPO 用于推理</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 两者完全等价，只是名称不同</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def opd_loss(student_logps, teacher_logps, rewards, beta=0.1):
+    weights = torch.softmax(rewards / beta, dim=0)
+    kl_per_sample = student_logps - teacher_logps
+    return (weights * kl_per_sample).sum()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>反向 KL</strong>：student_logp - teacher_logp（mode-seeking）</li>
+      <li><strong>质量权重</strong>：<code>softmax(r/β)</code>，聚焦高奖励样本</li>
+      <li><strong>vs DPO</strong>：连续奖励 vs binary 偏好</li>
+      <li><strong>β</strong>：温度参数，控制权重集中程度</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："OPD 和 RLHF distillation 的关系？"，"如何获取连续奖励分数？"</div>
+
+  <div style="background: linear-gradient(135deg, #e44c2c, #c0392b); color: white; padding: 2rem; border-radius: 12px; text-align: center; margin: 2rem 0;">
+    <h2 style="color: white; border: none; margin: 0 0 0.5rem;">🎉 全部 41 课完成！</h2>
+    <p style="margin: 0; opacity: 0.9;">你已经系统学习了从基础算子到 RLHF 对齐的完整 ML 工程知识体系。</p>
+  </div>
+
+  <nav class="lesson-nav">
+    <a href="./0040-linear-regression.html">← 40 · Linear Regression</a>
+    <a href="../NOTES.md" style="color: var(--accent);">查看学习记录 →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>21 · Gradient Clipping — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0020-weight-init.html">← 20 · Weight Init</a><span>›</span><span>第 21 课：Gradient Clipping</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:51.2%"></div></div>
+  <div class="progress-label">21 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 21 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>梯度裁剪</h1>
+    <p class="lesson-tagline">防止梯度爆炸：计算全局范数，按比例缩放所有梯度。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解梯度爆炸问题及其原因</li>
+      <li>掌握全局 L2 范数裁剪的算法</li>
+      <li>能手写 <code>clip_grad_norm_(parameters, max_norm)</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>全局 L2 范数裁剪</h3>
+    <pre><code># 步骤：
+# 1. 计算所有参数梯度的 L2 范数之和（全局范数）
+# total_norm = sqrt(Σ_p Σ_i g_p_i²)
+
+# 2. 如果 total_norm > max_norm，等比缩放所有梯度
+# clip_coef = max_norm / total_norm
+# for each param p: p.grad *= clip_coef</code></pre>
+
+    <h3>为什么用全局范数而不是逐参数？</h3>
+    <p>逐参数裁剪会改变梯度方向；全局裁剪只缩小步长，<strong>保持梯度方向不变</strong>。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def clip_grad_norm_(parameters, max_norm):
+    # parameters: list of nn.Parameter
+    params_with_grad = [p for p in parameters if p.grad is not None]
+    # 计算全局 L2 范数
+    total_norm = torch.sqrt(
+        sum(p.grad.data.pow(2).sum() for p in params_with_grad)
+    )
+    # 按比例裁剪
+    clip_coef = max_norm / (total_norm + 1e-6)
+    if clip_coef < 1:   # 只在超出时裁剪
+        for p in params_with_grad:
+            p.grad.data.mul_(clip_coef)
+    return total_norm</code></pre>
+
+    <div class="callout">
+      <strong>监控 total_norm：</strong>训练 LLM 时，通常记录 grad_norm 到日志中。
+      norm 突然激增 → 梯度爆炸 → 需要调小 lr 或增大 max_norm。
+      GPT-2/LLaMA 训练通常设 max_norm=1.0。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！全局范数 = sqrt(所有参数梯度平方和)，即把所有梯度展平后的 L2 范数。"
+         data-feedback-incorrect="✗ 不对。全局 L2 范数 = sqrt(Σ_p ||grad_p||²)，是所有梯度的总体范数。">
+      <h3>Q1 · 全局范数</h3>
+      <p>梯度裁剪中的"全局范数"是怎么计算的？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 所有梯度的最大值</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 各参数梯度范数的平均值</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> sqrt(所有参数梯度的平方和)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 各参数梯度范数的最大值</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！全局裁剪按统一比例缩放所有梯度，方向不变，只是"步子缩短了"。"
+         data-feedback-incorrect="✗ 不对。全局裁剪对所有梯度等比缩放，梯度向量方向保持不变。">
+      <h3>Q2 · 方向保持</h3>
+      <p>全局 L2 范数裁剪（与逐参数裁剪相比）的优势是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 计算速度更快</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 保持梯度方向不变（等比缩放）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 完全消除梯度爆炸</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 节省显存</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！只有当 total_norm > max_norm 时（clip_coef < 1）才需要裁剪；小于时不动。"
+         data-feedback-incorrect="✗ 不对。只有 total_norm > max_norm 时才裁剪（clip_coef < 1）；否则原样保留。">
+      <h3>Q3 · 何时裁剪</h3>
+      <p>如果 total_norm=0.5，max_norm=1.0，应该裁剪梯度吗？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 不裁剪（total_norm < max_norm，clip_coef > 1）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 裁剪到 0.5（乘以 1.0/0.5 = 2）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 裁剪，clip_coef = 0.5</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 裁剪到 0（所有梯度置零）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def clip_grad_norm_(parameters, max_norm):
+    params = [p for p in parameters if p.grad is not None]
+    total_norm = torch.sqrt(sum(p.grad.data.pow(2).sum() for p in params))
+    clip_coef  = max_norm / (total_norm + 1e-6)
+    if clip_coef < 1:
+        for p in params:
+            p.grad.data.mul_(clip_coef)
+    return total_norm</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>步骤</strong>：计算全局 L2 范数 → 超出则等比缩放所有梯度</li>
+      <li><strong>clip_coef</strong>：<code>max_norm / total_norm</code>，只在 &lt;1 时生效</li>
+      <li><strong>保持方向</strong>：等比缩放不改变梯度向量方向</li>
+      <li><strong>PyTorch 内置</strong>：<code>torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)</code></li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："梯度爆炸的原因是什么？"，"max_norm 怎么选合适的值？"</div>
+  <nav class="lesson-nav">
+    <a href="./0020-weight-init.html">← 20 · Weight Init</a>
+    <a href="./0022-conv2d.html">下一课：22 · Conv2D →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

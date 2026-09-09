@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>05 · Attention — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0004-layernorm.html">← 04 · LayerNorm</a><span>›</span><span>第 05 课：Attention</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:12.2%"></div></div>
+  <div class="progress-label">5 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 05 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>Scaled Dot-Product Attention</h1>
+    <p class="lesson-tagline">Transformer 的核心——三行代码，一辈子用不完。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 Q/K/V 的含义与 <code>Attention = softmax(QK<sup>T</sup>/√d_k)V</code> 的推导</li>
+      <li>掌握 <code>torch.bmm</code> 做批量矩阵乘</li>
+      <li>理解为什么要除以 √d_k（缩放的作用）</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <code class="formula">Attention(Q, K, V) = softmax(QK<sup>T</sup> / √d_k) · V</code>
+    <p><strong>Q（Query）</strong>：当前 token 想查什么<br>
+    <strong>K（Key）</strong>：每个 token 提供的索引<br>
+    <strong>V（Value）</strong>：每个 token 实际的内容</p>
+    <p>点积 <code>QK<sup>T</sup></code> 衡量 Query 和每个 Key 的相似度，softmax 把相似度变成权重，再加权求 V。</p>
+
+    <h3>为什么除以 √d_k？</h3>
+    <p>若 Q 和 K 的元素服从标准正态，<code>QK<sup>T</sup></code> 的单元素方差 ≈ d_k。
+    当 d_k 大时，点积绝对值很大，落入 softmax 的饱和区（梯度接近 0）。
+    除以 √d_k 让方差回到 1，梯度更健康。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math, torch
+
+def scaled_dot_product_attention(Q, K, V):
+    # Q: (B, S_q, d_k), K: (B, S_k, d_k), V: (B, S_k, d_v)
+    d_k = K.size(-1)
+    scores  = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)  # (B, S_q, S_k)
+    weights = torch.softmax(scores, dim=-1)                       # (B, S_q, S_k)
+    return torch.bmm(weights, V)                                  # (B, S_q, d_v)</code></pre>
+
+    <h3><code>torch.bmm</code> vs <code>@</code> vs <code>torch.matmul</code></h3>
+    <table>
+      <tr><th>操作</th><th>适用场景</th><th>输入要求</th></tr>
+      <tr><td><code>torch.bmm</code></td><td>严格 3D batch 矩阵乘</td><td>(B,n,m) @ (B,m,k)</td></tr>
+      <tr><td><code>@</code> / <code>matmul</code></td><td>任意维度，自动广播</td><td>最后两维是矩阵</td></tr>
+    </table>
+    <p>本题 Q/K/V 是 3D，两者均可；<code>torch.bmm</code> 语义更明确。</p>
+
+    <div class="callout">
+      <strong>注意：</strong><code>K.transpose(1, 2)</code> 交换 seq 和 d_k 维，
+      得到 <code>(B, d_k, S_k)</code>，与 Q 相乘后得分矩阵 <code>(B, S_q, S_k)</code>。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！scores = QK^T 的 shape 是 (B, S_q, S_k)，每行是一个 query 对所有 key 的相似度。"
+         data-feedback-incorrect="✗ 不对。bmm(Q(B,Sq,dk), K.T(B,dk,Sk)) = (B, Sq, Sk)。">
+      <h3>Q1 · 形状追踪</h3>
+      <p><code>Q: (2, 4, 8), K: (2, 6, 8)</code>，<code>scores = torch.bmm(Q, K.transpose(1,2))</code> 的 shape？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> (2, 8, 8)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (2, 6, 4)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> (2, 4, 6)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> (2, 8, 6)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！大 d_k 使点积方差大，softmax 饱和，梯度消失。除以 √d_k 缓解这一问题。"
+         data-feedback-incorrect="✗ 不对。缩放是为了防止 softmax 进入饱和区，不是为了约束输出范围。">
+      <h3>Q2 · 缩放的作用</h3>
+      <p>为什么要除以 <code>√d_k</code>？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 让输出值在 (0, 1) 之间</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 防止大 d_k 时点积过大导致 softmax 饱和</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 和 LayerNorm 保持一致</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 节省计算量</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！softmax 在 dim=-1（S_k 维）归一化，每行（每个 query）的注意力权重之和为 1。"
+         data-feedback-incorrect="✗ 不对。softmax 在 S_k 维（最后维）归一化，使每个 query 的权重之和为 1。">
+      <h3>Q3 · softmax 维度</h3>
+      <p><code>scores: (B, S_q, S_k)</code>，应对哪个维度做 softmax？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> dim=-1（S_k，对所有 key 归一化）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> dim=1（S_q，对所有 query 归一化）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> dim=0（batch 维）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 所有维度一起</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>代码填空</h2>
+    <div class="fill-blank" data-answers="torch.bmm(q, k.transpose(1, 2)) / math.sqrt(d_k)|torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)"
+         data-hint="torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)"
+         data-feedback-correct="✓ 正确！bmm + 转置 + 缩放，三步合一行。">
+      <pre><code>def scaled_dot_product_attention(Q, K, V):
+    d_k    = K.size(-1)
+    scores = ____________________   # (B, S_q, S_k)
+    weights = torch.softmax(scores, dim=-1)
+    return torch.bmm(weights, V)</code></pre>
+      <div class="blank-row">
+        <input class="exercise-input" type="text" placeholder="填 scores 的计算表达式" spellcheck="false" autocomplete="off" style="min-width:340px">
+        <button class="btn btn-primary check-btn">检验</button>
+      </div>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>import math, torch
+
+def scaled_dot_product_attention(Q, K, V):
+    d_k     = K.size(-1)
+    scores  = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)
+    weights = torch.softmax(scores, dim=-1)
+    return torch.bmm(weights, V)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>softmax(QK<sup>T</sup>/√d_k) · V</code></li>
+      <li><strong>缩放</strong>：除以 √d_k 防止 softmax 饱和</li>
+      <li><strong>工具</strong>：<code>torch.bmm</code> 做批量矩阵乘，<code>K.transpose(1,2)</code> 转置</li>
+      <li><strong>下一步</strong>：加掩码 → 因果注意力；多头 → MultiHead Attention</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Q、K、V 是怎么从输入得到的？"，"注意力的计算复杂度是多少？"</div>
+  <nav class="lesson-nav">
+    <a href="./0004-layernorm.html">← 04 · LayerNorm</a>
+    <a href="./0006-multihead-attention.html">下一课：06 · MultiHead Attention →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

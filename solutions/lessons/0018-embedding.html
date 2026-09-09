@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>18 · Embedding — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0017-dropout.html">← 17 · Dropout</a><span>›</span><span>第 18 课：Embedding</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:43.9%"></div></div>
+  <div class="progress-label">18 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 18 课</span><span class="badge badge-easy">Easy</span></div>
+    <h1>嵌入层</h1>
+    <p class="lesson-tagline">词表到向量：最简单的查表操作，但细节不少。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 Embedding 本质是带梯度的查找表</li>
+      <li>掌握用 <code>nn.Parameter</code> 手动实现</li>
+      <li>理解权重绑定（weight tying）优化</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>Embedding = 查表</h3>
+    <pre><code># 词表大小 V，嵌入维度 D
+# weight: (V, D) 的参数矩阵
+# indices: (B, S) 的整数 token id
+
+# 输出 = weight[indices]
+# 即：取出每个 token id 对应的行
+# 形状：(B, S, D)</code></pre>
+
+    <h3>权重绑定（Weight Tying）</h3>
+    <p>GPT-2 等模型让输入 Embedding 和输出 Linear 的权重相同：</p>
+    <pre><code># embedding.weight: (V, D)
+# 输出 logits = hidden @ embedding.weight.T
+# 好处：减少参数量（节省 V*D 个参数），效果通常更好</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class Embedding(nn.Module):
+    def __init__(self, vocab_size, embedding_dim):
+        super().__init__()
+        self.weight = nn.Parameter(
+            torch.randn(vocab_size, embedding_dim)
+        )
+
+    def forward(self, indices):
+        # indices: (B, S) integer tensor
+        return self.weight[indices]    # (B, S, D)</code></pre>
+
+    <div class="callout">
+      <strong>梯度只流向被选中的行：</strong>反向传播时，只有 indices 中出现过的 token id 对应的行会得到梯度更新。
+      这正是 Embedding 高效的原因——稀疏更新。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！weight 形状是 (vocab_size, embedding_dim)，索引取行，结果 (B, S, D)。"
+         data-feedback-incorrect="✗ 不对。Embedding 权重形状是 (V, D)，不是 (D, V)。">
+      <h3>Q1 · 权重形状</h3>
+      <p>vocab_size=50000, embedding_dim=768，weight 的形状是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> (768, 50000)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (50000, 768)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> (50000,)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> (768,)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！Embedding 梯度是稀疏的：只有本批次中出现过的 token 对应的行才有梯度。"
+         data-feedback-incorrect="✗ 不对。Embedding 只对当前 batch 中出现过的 token 的行有梯度，是稀疏更新。">
+      <h3>Q2 · 梯度稀疏性</h3>
+      <p>反向传播时，Embedding 的哪些行会得到梯度更新？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 全部 vocab_size 行</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 随机一半的行</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 当前 batch 中出现过的 token id 对应的行</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 梯度最大的 top-k 行</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！Weight tying 让输入 Embedding 和输出 Linear 共享同一个矩阵，减少参数。"
+         data-feedback-incorrect="✗ 不对。Weight tying 是让 Embedding 权重和输出投影层共享，节省 V*D 个参数。">
+      <h3>Q3 · 权重绑定</h3>
+      <p>"Weight Tying" 在语言模型中指什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 输入 Embedding 权重和输出 Linear 权重共享</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 所有层的 LayerNorm 权重共享</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> Q 和 K 的投影矩阵共享</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 奇数层和偶数层权重共享</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class Embedding(nn.Module):
+    def __init__(self, vocab_size, embedding_dim):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(vocab_size, embedding_dim))
+
+    def forward(self, indices):
+        return self.weight[indices]</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>本质</strong>：查找表，<code>weight[indices]</code></li>
+      <li><strong>权重形状</strong>：<code>(vocab_size, embedding_dim)</code></li>
+      <li><strong>梯度</strong>：稀疏，只更新出现过的 token</li>
+      <li><strong>Weight Tying</strong>：GPT-2 的输入 Embedding = 输出 Linear.T</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："positional embedding 和 token embedding 怎么结合？"，"BPE token 为什么比 word-level 更好？"</div>
+  <nav class="lesson-nav">
+    <a href="./0017-dropout.html">← 17 · Dropout</a>
+    <a href="./0019-gelu.html">下一课：19 · GELU →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

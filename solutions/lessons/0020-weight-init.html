@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>20 · Weight Init — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0019-gelu.html">← 19 · GELU</a><span>›</span><span>第 20 课：Weight Init</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:48.8%"></div></div>
+  <div class="progress-label">20 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 20 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>权重初始化</h1>
+    <p class="lesson-tagline">Kaiming / He init：ReLU 激活的正确初始化，std = √(2/fan_in)。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解为什么初始化方式影响训练</li>
+      <li>掌握 Kaiming（He）初始化的公式</li>
+      <li>能手写 <code>kaiming_init(weight, activation)</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>信号方差的传播</h3>
+    <pre><code># 设 y = W @ x，W 有 fan_in 列
+# Var(y_i) = Σ_j Var(W_ij) * Var(x_j)
+#           = fan_in * Var(w) * Var(x)
+# 要保持 Var(y) = Var(x)：
+# Var(w) = 1 / fan_in   → Xavier init</code></pre>
+
+    <h3>ReLU 减半方差 → Kaiming</h3>
+    <pre><code># ReLU 将约一半输出置零，方差减半
+# 所以需要补偿：
+# Var(w) = 2 / fan_in   → Kaiming init
+# std  = sqrt(2 / fan_in)
+
+# 对应 PyTorch：
+torch.nn.init.kaiming_normal_(weight, mode='fan_in', nonlinearity='relu')</code></pre>
+
+    <h3>Xavier（Glorot）vs Kaiming</h3>
+    <table>
+      <tr><th></th><th>Xavier</th><th>Kaiming（He）</th></tr>
+      <tr><td>std</td><td>√(1/fan_in)</td><td>√(2/fan_in)</td></tr>
+      <tr><td>激活</td><td>tanh、sigmoid</td><td>ReLU、Leaky ReLU</td></tr>
+      <tr><td>考虑激活非线性</td><td>否</td><td>是（增益因子）</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def kaiming_init(weight, activation='relu'):
+    fan_in = weight.size(1)   # 输入维度
+    gain = math.sqrt(2) if activation == 'relu' else 1.0
+    std  = gain / math.sqrt(fan_in)
+    with torch.no_grad():
+        weight.normal_(0, std)
+    return weight</code></pre>
+
+    <div class="callout">
+      <strong>增益（gain）：</strong>不同激活有不同 gain 值：
+      relu=√2，tanh≈5/3，sigmoid≈1，linear=1。
+      PyTorch 的 <code>nn.init.calculate_gain()</code> 可自动查表。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！Kaiming init 的 std = √(2/fan_in)，其中 2 来自 ReLU 将方差减半的补偿。"
+         data-feedback-incorrect="✗ 不对。Kaiming 的 std = √(2/fan_in)，不是 1/√fan_in（那是 Xavier）。">
+      <h3>Q1 · Kaiming 公式</h3>
+      <p>Kaiming（He）初始化对 ReLU 激活的权重 std 是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 1 / sqrt(fan_in)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 1 / fan_in</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> sqrt(2 / fan_in)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 2 / fan_in</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！fan_in 是权重矩阵的输入维度（列数），即每个输出神经元接受的输入连接数。"
+         data-feedback-incorrect="✗ 不对。fan_in = weight.size(1)，是输入维度（列数）。">
+      <h3>Q2 · fan_in</h3>
+      <p>对于 weight 形状 (fan_out, fan_in)，<code>weight.size(1)</code> 是什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 输出维度（fan_out）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 输入维度（fan_in）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 总参数量</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 批大小</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！Xavier 用于 tanh/sigmoid，Kaiming 用于 ReLU 系列（因为 ReLU 会减半方差）。"
+         data-feedback-incorrect="✗ 不对。ReLU 层应该用 Kaiming，tanh 层用 Xavier。">
+      <h3>Q3 · 选择初始化</h3>
+      <p>哪种激活配 Kaiming 初始化，哪种配 Xavier？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> Kaiming → ReLU；Xavier → tanh</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> Kaiming → tanh；Xavier → ReLU</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 两者都适用于所有激活</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> Kaiming → GELU；Xavier → SiLU</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def kaiming_init(weight, activation='relu'):
+    fan_in = weight.size(1)
+    gain = math.sqrt(2.0) if activation == 'relu' else 1.0
+    std  = gain / math.sqrt(fan_in)
+    with torch.no_grad():
+        weight.normal_(0, std)
+    return weight</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>Kaiming std</strong>：<code>sqrt(2/fan_in)</code>（ReLU）</li>
+      <li><strong>为什么 ×2</strong>：ReLU 将约一半输出置零，方差减半，需补偿</li>
+      <li><strong>PyTorch 内置</strong>：<code>nn.init.kaiming_normal_(w, mode='fan_in')</code></li>
+      <li><strong>with no_grad</strong>：原地修改参数时需要 <code>torch.no_grad()</code></li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Transformer 权重应该用什么初始化？"，"fan_in 和 fan_out 的选择有什么规则？"</div>
+  <nav class="lesson-nav">
+    <a href="./0019-gelu.html">← 19 · GELU</a>
+    <a href="./0021-gradient-clipping.html">下一课：21 · Gradient Clipping →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

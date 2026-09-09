@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>14 · KV Cache — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0013-gpt2-block.html">← 13 · GPT-2 Block</a><span>›</span><span>第 14 课：KV Cache</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:34.1%"></div></div>
+  <div class="progress-label">14 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 14 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>KV Cache 注意力</h1>
+    <p class="lesson-tagline">推理加速的核心：缓存历史 K/V，每步只投影新 token。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解自回归推理的计算瓶颈</li>
+      <li>掌握 KV Cache 的存储和 cat 拼接方式</li>
+      <li>理解为什么 Q 只用新 token，K/V 用全部历史</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <p>自回归生成每步生成一个新 token。朴素实现每步都重新计算所有 token 的 K/V，浪费算力。</p>
+
+    <h3>KV Cache 的思路</h3>
+    <pre><code># 推理第 t 步：已有 t-1 个 token，新生成第 t 个
+# 朴素：重新计算所有 t 个 token 的 K/V
+# KV Cache：
+#   - K_past, V_past: 缓存了前 t-1 个 token 的 K/V
+#   - 只计算第 t 个 token 的 Q/K/V
+#   - K_all = cat([K_past, K_new], dim=-2)  # 拼接历史
+#   - 用 Q_new 关注 K_all / V_all</code></pre>
+
+    <h3>Cache 数据结构</h3>
+    <p>Cache 是 tuple <code>(K_past, V_past)</code>，形状各为 <code>(B, h, S_past, d_k)</code>。
+    首次调用传 <code>None</code>，后续传上一步返回的 cache。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class KVCacheAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, x, cache=None):
+        # x: (B, S_new, D)，S_new=1 in autoregressive decoding
+        B, S_new, D = x.shape
+        h, dk = self.num_heads, self.d_k
+
+        # 只对新 token 投影 Q/K/V
+        q = self.W_q(x).view(B, S_new, h, dk).transpose(1, 2)
+        k = self.W_k(x).view(B, S_new, h, dk).transpose(1, 2)
+        v = self.W_v(x).view(B, S_new, h, dk).transpose(1, 2)
+
+        # 拼接历史 KV
+        if cache is not None:
+            k_past, v_past = cache
+            k = torch.cat([k_past, k], dim=2)   # (B, h, S_all, dk)
+            v = torch.cat([v_past, v], dim=2)
+
+        new_cache = (k, v)  # 更新后的 cache 返回给下一步
+
+        scores  = (q @ k.transpose(-2, -1)) / math.sqrt(dk)
+        weights = torch.softmax(scores, dim=-1)
+        out = (weights @ v).transpose(1, 2).contiguous().view(B, S_new, D)
+        return self.W_o(out), new_cache</code></pre>
+
+    <div class="callout callout-ok">
+      <strong>效率：</strong>无 KV Cache 时每步复杂度 O(S²)；有 KV Cache 时每步 O(S)，
+      整个生成序列总复杂度 O(S²)→O(S) 每步。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！每步只有新 token 需要 Q 投影；K/V 拼接历史，让新 Q 能关注所有历史。"
+         data-feedback-incorrect="✗ 不对。Q 只需要新 token（预测当前位置），K/V 需要全部历史（提供上下文）。">
+      <h3>Q1 · Q vs KV</h3>
+      <p>KV Cache 中，为什么 Q 只用新 token，而 K/V 用全部历史？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> Q 的计算更耗时，所以省略历史</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 历史 Q 已经被上一步使用过了</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> Q 代表当前预测位置的查询；K/V 提供所有历史上下文</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> Q 和历史无关，只取决于当前 token</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！k_past (B,h,t-1,dk) + k_new (B,h,1,dk) → cat dim=2 → (B,h,t,dk)。"
+         data-feedback-incorrect="✗ 不对。K 的时间维度是 dim=2（形状 (B,h,S,dk) 中的 S）。">
+      <h3>Q2 · cat 维度</h3>
+      <p><code>k_past: (B, h, t-1, dk)</code>，<code>k_new: (B, h, 1, dk)</code>，沿哪个维度 cat？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> dim=0（batch）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> dim=2（序列长度维）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> dim=1（头数维）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> dim=-1（dk 维）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！随生成步数增加，KV Cache 显存线性增长：O(S * num_layers * num_heads * d_k)。"
+         data-feedback-incorrect="✗ 不对。KV Cache 的主要代价是随序列长度增加的显存占用。">
+      <h3>Q3 · KV Cache 的代价</h3>
+      <p>KV Cache 最主要的缺点是什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 显存随序列长度线性增长</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 每步计算量增加</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 不支持批量推理</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 需要额外训练才能使用</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class KVCacheAttention(nn.Module):
+    def forward(self, x, cache=None):
+        B, S_new, D = x.shape
+        h, dk = self.num_heads, self.d_k
+        q = self.W_q(x).view(B, S_new, h, dk).transpose(1, 2)
+        k = self.W_k(x).view(B, S_new, h, dk).transpose(1, 2)
+        v = self.W_v(x).view(B, S_new, h, dk).transpose(1, 2)
+        if cache is not None:
+            k = torch.cat([cache[0], k], dim=2)
+            v = torch.cat([cache[1], v], dim=2)
+        scores  = (q @ k.transpose(-2,-1)) / math.sqrt(dk)
+        weights = torch.softmax(scores, dim=-1)
+        out = (weights @ v).transpose(1,2).contiguous().view(B, S_new, D)
+        return self.W_o(out), (k, v)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>思路</strong>：缓存历史 K/V，每步只投影新 token</li>
+      <li><strong>拼接</strong>：<code>torch.cat([k_past, k_new], dim=2)</code></li>
+      <li><strong>返回</strong>：<code>(output, new_cache)</code>，cache 传给下一步</li>
+      <li><strong>代价</strong>：显存随序列长度线性增长（GQA/MQA 可减小）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："PagedAttention 是什么？"，"KV Cache 量化怎么做？"</div>
+  <nav class="lesson-nav">
+    <a href="./0013-gpt2-block.html">← 13 · GPT-2 Block</a>
+    <a href="./0015-mlp.html">下一课：15 · SwiGLU MLP →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>15 · SwiGLU MLP — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0014-kv-cache.html">← 14 · KV Cache</a><span>›</span><span>第 15 课：SwiGLU MLP</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:36.6%"></div></div>
+  <div class="progress-label">15 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 15 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>SwiGLU MLP</h1>
+    <p class="lesson-tagline">LLaMA 的 FFN：门控机制让激活更精确，SiLU 代替 GELU。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 Gated Linear Unit (GLU) 的门控思想</li>
+      <li>掌握 SwiGLU：<code>silu(gate) * up</code> 的双投影结构</li>
+      <li>能写出三投影 SwiGLU FFN</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>从 GELU FFN 到 SwiGLU</h3>
+    <pre><code># GPT-2 风格：单投影 + GELU
+out = W2(GELU(W1(x)))
+
+# SwiGLU：双投影，gate 控制 up 的通过量
+gate = W_gate(x)    # (B, S, 4D)
+up   = W_up(x)      # (B, S, 4D)
+out  = W_down(silu(gate) * up)   # 元素乘</code></pre>
+
+    <h3>SiLU 激活</h3>
+    <pre><code>silu(x) = x * sigmoid(x)
+# 平滑版 ReLU，负值有微弱梯度
+# silu(2) ≈ 1.76，silu(-1) ≈ -0.27</code></pre>
+
+    <div class="callout">
+      <strong>门控的直觉：</strong>gate 的 silu 输出决定每个维度"打开多少"，
+      up 提供信息量。两者逐元素相乘 = 软性特征选择。
+    </div>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class SwiGLUMLP(nn.Module):
+    def __init__(self, d_model, hidden_dim=None):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = 4 * d_model
+        self.gate_proj = nn.Linear(d_model, hidden_dim, bias=False)
+        self.up_proj   = nn.Linear(d_model, hidden_dim, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, d_model, bias=False)
+
+    def forward(self, x):
+        gate = self.gate_proj(x)              # (B, S, H)
+        up   = self.up_proj(x)               # (B, S, H)
+        return self.down_proj(F.silu(gate) * up)</code></pre>
+
+    <div class="callout callout-ok">
+      <strong>LLaMA 细节：</strong>LLaMA 2/3 中 hidden_dim 通常是 <code>2/3 * 4 * d_model</code> 取整到 256 的倍数，
+      保持参数量与 GPT-2 FFN 相当。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！SwiGLU 用两个投影：gate（决定权重）+ up（提供值），逐元素相乘后再 down_proj。"
+         data-feedback-incorrect="✗ 不对。SwiGLU 的关键是三个投影（gate, up, down），gate 和 up 相乘。">
+      <h3>Q1 · SwiGLU 结构</h3>
+      <p>SwiGLU MLP 相比 GELU FFN，多了什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 多了 LayerNorm</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 多了残差连接</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 多了一个 gate 投影，和 up 投影逐元素相乘</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 多了 dropout</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！SiLU(x) = x * sigmoid(x)，也叫 Swish 激活。"
+         data-feedback-incorrect="✗ 不对。SiLU 的定义是 x * sigmoid(x)，不是简单的 max 或 tanh。">
+      <h3>Q2 · SiLU 定义</h3>
+      <p><code>F.silu(x)</code> 等价于？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> max(0, x)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> x * torch.sigmoid(x)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> torch.tanh(x) * x</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> x / (1 + abs(x))</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！gate 经过 silu 后的输出（0~1 附近）乘以 up，决定每个特征维度保留多少信息。"
+         data-feedback-incorrect="✗ 不对。gate 提供"软开关"，控制 up 中每个特征通过的量。">
+      <h3>Q3 · 门控直觉</h3>
+      <p>SwiGLU 中 gate 的作用最接近哪个比喻？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 软性特征选择器（决定哪些维度被激活）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 归一化层（控制数值大小）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 位置编码（控制序列顺序）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 注意力权重（控制 token 关注范围）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class SwiGLUMLP(nn.Module):
+    def __init__(self, d_model, hidden_dim=None):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = 4 * d_model
+        self.gate_proj = nn.Linear(d_model, hidden_dim, bias=False)
+        self.up_proj   = nn.Linear(d_model, hidden_dim, bias=False)
+        self.down_proj = nn.Linear(hidden_dim, d_model, bias=False)
+
+    def forward(self, x):
+        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>down_proj(silu(gate_proj(x)) * up_proj(x))</code></li>
+      <li><strong>三个投影</strong>：gate, up, down（LLaMA 无 bias）</li>
+      <li><strong>SiLU</strong>：<code>x * sigmoid(x)</code>，平滑 ReLU</li>
+      <li><strong>代表模型</strong>：LLaMA 1/2/3, Mistral, Qwen</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："为什么 SwiGLU 比 GELU FFN 效果更好？"，"hidden_dim 为什么要取 2/3 * 4D？"</div>
+  <nav class="lesson-nav">
+    <a href="./0014-kv-cache.html">← 14 · KV Cache</a>
+    <a href="./0016-cross-entropy.html">下一课：16 · Cross Entropy →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

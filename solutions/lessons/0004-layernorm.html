@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>04 · LayerNorm — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0003-linear.html">← 03 · Linear</a><span>›</span><span>第 04 课：LayerNorm</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:9.8%"></div></div>
+  <div class="progress-label">4 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 04 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>实现 LayerNorm</h1>
+    <p class="lesson-tagline">Transformer 的标配归一化，关键在 <code>unbiased=False</code> 和 <code>keepdim=True</code>。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 LayerNorm 在最后一维归一化的原因</li>
+      <li>掌握 <code>unbiased=False</code>（有偏方差）的用法</li>
+      <li>区分 LayerNorm 与 BatchNorm 的归一化维度</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <code class="formula">LayerNorm(x) = γ · (x − μ) / √(σ² + ε) + β</code>
+    <p>其中 μ 和 σ² 在<strong>最后一维</strong>（特征维度）上计算，对每个样本独立归一化。</p>
+
+    <h3>与 BatchNorm 的关键区别</h3>
+    <table>
+      <tr><th></th><th>LayerNorm</th><th>BatchNorm</th></tr>
+      <tr><td>归一化维度</td><td>特征维（dim=-1）</td><td>批次维（dim=0）</td></tr>
+      <tr><td>依赖批大小</td><td>否（batch=1 也能用）</td><td>是（batch太小不稳）</td></tr>
+      <tr><td>用于</td><td>Transformer、LLM</td><td>CNN、视觉模型</td></tr>
+    </table>
+    <p>Transformer 用 LayerNorm 是因为序列长度可变、batch 中不同序列应该独立归一化。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def my_layer_norm(x, gamma, beta, eps=1e-5):
+    mean = x.mean(dim=-1, keepdim=True)                    # μ
+    var  = x.var(dim=-1, keepdim=True, unbiased=False)     # σ²（有偏）
+    x_norm = (x - mean) / torch.sqrt(var + eps)
+    return gamma * x_norm + beta</code></pre>
+
+    <h3>为什么 <code>unbiased=False</code>？</h3>
+    <p>PyTorch 的 <code>.var()</code> 默认是<strong>无偏估计</strong>（除以 n-1，Bessel 修正）。
+    但归一化时我们要的是<strong>当前样本的方差</strong>，而不是对总体方差的无偏估计，
+    所以用 <code>unbiased=False</code>（除以 n）——这也是官方 <code>nn.LayerNorm</code> 的做法。</p>
+
+    <h3>gamma 和 beta 的作用</h3>
+    <p>归一化后数据变成均值 0、方差 1，可能破坏网络的表达能力。
+    γ（缩放）和 β（偏移）是<strong>可学习参数</strong>，让模型恢复所需的任意分布。
+    初始化：γ=1, β=0（即初始为恒等变换）。</p>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！LayerNorm 在特征维度 dim=-1 归一化，每个 token 独立处理。"
+         data-feedback-incorrect="✗ 不对。LayerNorm 在最后一维（特征维）上计算 mean/var。">
+      <h3>Q1 · 归一化维度</h3>
+      <p>输入 <code>(B, S, D)</code>，LayerNorm 在哪个维度计算均值和方差？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> dim=0（batch 维）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> dim=1（序列维）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> dim=-1（特征维 D）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 所有维度同时</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！unbiased=False 用 n 除（有偏），与 nn.LayerNorm 行为一致。"
+         data-feedback-incorrect="✗ 不对。unbiased=False → 除以 n；unbiased=True（默认）→ 除以 n-1。">
+      <h3>Q2 · 有偏 vs 无偏</h3>
+      <p><code>x.var(dim=-1, unbiased=False)</code> 和 <code>x.var(dim=-1)</code> 的区别？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 没区别，结果一样</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> False 除以 n，默认除以 n-1</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> False 除以 n-1，默认除以 n</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> False 只用正值，默认不限制</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！gamma 初始化为 1、beta 为 0，初始行为是恒等变换。"
+         data-feedback-incorrect="✗ 不对。初始 gamma=1, beta=0 保证初始输出 = 归一化后的 x，训练中学习调整。">
+      <h3>Q3 · 初始化</h3>
+      <p>LayerNorm 中 gamma 和 beta 的标准初始值是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> gamma=1, beta=0</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> gamma=0, beta=1</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 均为随机初始化</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> gamma=0.01, beta=0</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>代码填空</h2>
+    <p>计算有偏方差（与 <code>nn.LayerNorm</code> 一致）：</p>
+    <div class="fill-blank" data-answers="x.var(dim=-1, keepdim=true, unbiased=false)|x.var(dim=-1, keepdim=True, unbiased=False)"
+         data-hint="x.var(dim=-1, keepdim=True, unbiased=False)"
+         data-feedback-correct="✓ 正确！两个关键字：keepdim=True（广播）和 unbiased=False（有偏估计）。">
+      <pre><code>var = ____________________</code></pre>
+      <div class="blank-row">
+        <input class="exercise-input" type="text" placeholder="填完整表达式" spellcheck="false" autocomplete="off" style="min-width:320px">
+        <button class="btn btn-primary check-btn">检验</button>
+      </div>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def my_layer_norm(x, gamma, beta, eps=1e-5):
+    mean = x.mean(dim=-1, keepdim=True)
+    var  = x.var(dim=-1, keepdim=True, unbiased=False)
+    x_norm = (x - mean) / torch.sqrt(var + eps)
+    return gamma * x_norm + beta</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>维度</strong>：在 <code>dim=-1</code>（特征维）归一化，每个 token 独立</li>
+      <li><strong>方差</strong>：<code>unbiased=False</code>（有偏，除以 n）</li>
+      <li><strong>keepdim</strong>：mean/var 计算后必须 <code>keepdim=True</code> 才能广播</li>
+      <li><strong>延伸</strong>：RMSNorm = 去掉减均值步骤，LLaMA/Gemma 采用</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："LayerNorm 的梯度怎么计算？"，"Pre-norm 和 Post-norm 的区别？"</div>
+  <nav class="lesson-nav">
+    <a href="./0003-linear.html">← 03 · Linear</a>
+    <a href="./0005-attention.html">下一课：05 · Attention →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>32 · Top-k Sampling — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0031-gradient-accumulation.html">← 31 · Gradient Accumulation</a><span>›</span><span>第 32 课：Top-k Sampling</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:78%"></div></div>
+  <div class="progress-label">32 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 32 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>Top-k / Top-p 采样</h1>
+    <p class="lesson-tagline">控制生成多样性：只从最高概率的 k 个 token（或概率累积 p）中采样。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 top-k 和 top-p（nucleus）采样的区别</li>
+      <li>掌握用 -inf 掩码截断低概率 token 的技巧</li>
+      <li>理解 temperature 缩放的作用</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>贪心 vs 采样</h3>
+    <pre><code>greedy: next = argmax(logits)        # 确定性，常重复
+sample: next = multinomial(softmax)  # 随机，可能低质
+
+# 平衡方案：只在高概率 token 中随机采样</code></pre>
+
+    <h3>Top-k vs Top-p</h3>
+    <pre><code># Top-k：保留概率最高的 k 个 token
+kth_val = logits.topk(k).values.min()
+logits[logits < kth_val] = -inf    # 截断尾部
+
+# Top-p（Nucleus Sampling）：保留概率累积到 p 的 token
+sorted_probs = softmax(logits).sort(descending=True)
+cumsum = sorted_probs.cumsum(0)
+remove_idx = cumsum > p              # 超过 p 的截断
+logits[remove_idx] = -inf</code></pre>
+
+    <h3>Temperature</h3>
+    <pre><code>logits = logits / temperature
+# temperature < 1 → 分布变尖锐（保守，质量高）
+# temperature > 1 → 分布变平坦（多样性高）
+# temperature = 0 → 等同贪心（argmax）</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def topk_sampling(logits, k=50, p=0.9, temperature=1.0):
+    # logits: (vocab_size,)
+    logits = logits / max(temperature, 1e-8)
+
+    # Top-k 截断
+    if k > 0:
+        topk_vals = torch.topk(logits, k).values
+        logits[logits < topk_vals[-1]] = float('-inf')
+
+    # Top-p 截断（nucleus sampling）
+    if p < 1.0:
+        probs = torch.softmax(logits, dim=-1)
+        sorted_probs, sorted_idx = torch.sort(probs, descending=True)
+        cumprobs = torch.cumsum(sorted_probs, dim=0)
+        remove = cumprobs - sorted_probs > p   # 保留首个超过 p 的 token
+        sorted_idx_remove = sorted_idx[remove]
+        logits[sorted_idx_remove] = float('-inf')
+
+    # 从剩余 token 中采样
+    probs = torch.softmax(logits, dim=-1)
+    return torch.multinomial(probs, num_samples=1).item()</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！Top-p 保留概率累积到 p 所需的最少 token，k 个数动态变化（高熵分布 k 大，低熵分布 k 小）。"
+         data-feedback-incorrect="✗ 不对。Top-p（Nucleus）的 k 是动态的：取概率和超过 p 的最小 token 集合。">
+      <h3>Q1 · Top-k vs Top-p</h3>
+      <p>Top-p（Nucleus）采样与 Top-k 的核心区别是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> Top-p 更快，Top-k 更准</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> Top-p 的 k 是动态的（基于概率累积），Top-k 固定</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> Top-p 用于训练，Top-k 用于推理</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> Top-p 不需要 temperature</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！temperature < 1 让高概率 token 更突出（分布更尖锐），生成更保守/确定；temperature > 1 更随机。"
+         data-feedback-incorrect="✗ 不对。temperature=0.5 时分布变尖锐（保守），temperature=2.0 时分布变平坦（随机）。">
+      <h3>Q2 · Temperature</h3>
+      <p>temperature=0.5 vs temperature=2.0，生成有什么区别？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> temperature=0.5 更随机</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 无区别，temperature 不影响概率分布</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> temperature=0.5 更保守（分布尖锐），temperature=2.0 更随机</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> temperature=2.0 更保守</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！截断用 -inf，softmax 后这些位置变为 0，multinomial 不会采样到它们。"
+         data-feedback-incorrect="✗ 不对。用 -inf 填充后 softmax(exp(-inf))=0，确保被截断的 token 概率精确为 0。">
+      <h3>Q3 · 截断实现</h3>
+      <p>为什么用 <code>float('-inf')</code> 而不是 -1e10 来截断 logits？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> -inf 经 softmax 后精确变为 0，-1e10 可能有微小误差</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> -inf 计算更快</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> -1e10 可能导致溢出</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 两者等价，只是风格问题</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def topk_sampling(logits, k=50, p=0.9, temperature=1.0):
+    logits = logits / max(temperature, 1e-8)
+    # Top-k
+    if k > 0:
+        logits[logits < logits.topk(k).values[-1]] = float('-inf')
+    # Top-p
+    if p < 1.0:
+        probs = logits.softmax(-1)
+        sorted_probs, sorted_idx = probs.sort(descending=True)
+        cumsum = sorted_probs.cumsum(0)
+        remove = (cumsum - sorted_probs) > p
+        logits[sorted_idx[remove]] = float('-inf')
+    return torch.multinomial(logits.softmax(-1), 1).item()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>Top-k</strong>：保留最高 k 个，其余 -inf</li>
+      <li><strong>Top-p</strong>：保留概率累积 ≤ p 的最小集合</li>
+      <li><strong>Temperature</strong>：logits/t，t&lt;1 保守，t&gt;1 随机</li>
+      <li><strong>采样</strong>：<code>torch.multinomial(probs, 1)</code></li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："ChatGPT 用的是什么采样策略？"，"repetition penalty 怎么实现？"</div>
+  <nav class="lesson-nav">
+    <a href="./0031-gradient-accumulation.html">← 31 · Gradient Accumulation</a>
+    <a href="./0033-beam-search.html">下一课：33 · Beam Search →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>28 · MoE — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0027-vit-patch.html">← 27 · ViT Patch</a><span>›</span><span>第 28 课：MoE</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:68.3%"></div></div>
+  <div class="progress-label">28 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 28 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>混合专家（MoE）</h1>
+    <p class="lesson-tagline">稀疏激活：Router 选 top-k 专家，只运行被选中的专家。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 MoE 如何用稀疏激活扩大模型容量</li>
+      <li>掌握 top-k 路由器 + 专家加权求和的实现</li>
+      <li>理解负载均衡的重要性</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>MoE 结构</h3>
+    <pre><code># 有 E 个专家（每个是独立的 MLP）
+# Router：决定每个 token 去哪些专家
+# top-k：每个 token 只激活 k 个专家
+
+# 前向：
+# 1. router_logits = W_router @ x    # (B*S, E)
+# 2. weights, indices = topk(router_logits, k)
+# 3. weights = softmax(weights)       # 专家权重
+# 4. out = Σ_i weights[i] * expert[indices[i]](x)</code></pre>
+
+    <h3>稀疏性的好处</h3>
+    <p>E=8 个专家，每次只激活 k=2 个：参数量是密集模型的 8x，
+    但计算量只有 2/8=25% 增加（路由开销）→ 高效扩大模型容量。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class MoE(nn.Module):
+    def __init__(self, d_model, num_experts=8, top_k=2, ffn_dim=None):
+        super().__init__()
+        self.top_k = top_k
+        if ffn_dim is None:
+            ffn_dim = 4 * d_model
+        self.router = nn.Linear(d_model, num_experts, bias=False)
+        self.experts = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model, ffn_dim),
+                nn.GELU(),
+                nn.Linear(ffn_dim, d_model)
+            ) for _ in range(num_experts)
+        ])
+
+    def forward(self, x):
+        B, S, D = x.shape
+        x_flat = x.view(-1, D)   # (B*S, D)
+
+        router_logits = self.router(x_flat)  # (B*S, E)
+        weights, indices = torch.topk(router_logits, self.top_k, dim=-1)
+        weights = torch.softmax(weights, dim=-1)  # (B*S, k)
+
+        out = torch.zeros_like(x_flat)
+        for i, expert in enumerate(self.experts):
+            mask = (indices == i).any(dim=-1)   # 被选中的 token
+            if not mask.any():
+                continue
+            # 该专家处理的 token
+            expert_input = x_flat[mask]
+            expert_out   = expert(expert_input)
+            # 找到对应权重
+            expert_weight = weights[mask] * (indices[mask] == i).float()
+            out[mask] += (expert_out * expert_weight.sum(dim=-1, keepdim=True))
+
+        return out.view(B, S, D)</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！MoE 的核心优势是参数量大但计算稀疏：每次只激活 top-k 个专家，FLOPs 远小于总参数量。"
+         data-feedback-incorrect="✗ 不对。MoE 主要的优势是稀疏激活：参数量大，每次计算量小（只运行 k/E 的专家）。">
+      <h3>Q1 · MoE 优势</h3>
+      <p>MoE 相比同参数量的密集模型，主要优势是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 推理速度更快（因为参数更少）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 相同计算量下参数量更大（稀疏激活）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 不需要训练（零样本）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 内存占用更少</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！top-k 选择后对 k 个权重做 softmax，得到加权系数，然后对专家输出加权求和。"
+         data-feedback-incorrect="✗ 不对。选出 top-k 后，对 k 个 logit 做 softmax 得到权重，加权平均 k 个专家的输出。">
+      <h3>Q2 · 路由机制</h3>
+      <p>MoE Router 选出 top-2 专家后，如何整合它们的输出？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 取两个输出的最大值</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 直接相加（等权重）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 用 softmax(top-2 logits) 做加权平均</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 只取得分最高的那个专家</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！如果没有负载均衡，部分专家会接收绝大多数 token，其他专家几乎不参与，退化为密集模型。"
+         data-feedback-incorrect="✗ 不对。没有负载均衡会导致专家利用不均（少数专家过载），丧失 MoE 的稀疏激活优势。">
+      <h3>Q3 · 负载均衡</h3>
+      <p>MoE 训练中如果不加负载均衡损失会有什么问题？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 少数专家过载，其他专家退化，丧失稀疏优势</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 梯度消失</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 路由器无法收敛</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 专家输出求和溢出</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class MoE(nn.Module):
+    def forward(self, x):
+        B, S, D = x.shape
+        x_flat = x.view(-1, D)
+        router_logits = self.router(x_flat)
+        weights, indices = torch.topk(router_logits, self.top_k, dim=-1)
+        weights = torch.softmax(weights, dim=-1)   # (B*S, k)
+        out = torch.zeros_like(x_flat)
+        for i, expert in enumerate(self.experts):
+            # 找这个 expert 对应的 token 和权重
+            mask = (indices == i)                  # (B*S, k)
+            token_mask = mask.any(dim=-1)           # (B*S,)
+            if not token_mask.any():
+                continue
+            w = (mask * weights)[token_mask].sum(-1, keepdim=True)
+            out[token_mask] += w * expert(x_flat[token_mask])
+        return out.view(B, S, D)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>结构</strong>：Router（线性）+ E 个专家 MLP + top-k 选择</li>
+      <li><strong>权重</strong>：<code>softmax(top-k logits)</code>，加权求和专家输出</li>
+      <li><strong>稀疏性</strong>：每 token 只跑 k/E 比例的专家</li>
+      <li><strong>代表模型</strong>：Mixtral 8×7B（k=2, E=8），GPT-4（推测 MoE）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Mixtral 的 MoE 细节？"，"负载均衡损失怎么实现？"</div>
+  <nav class="lesson-nav">
+    <a href="./0027-vit-patch.html">← 27 · ViT Patch</a>
+    <a href="./0029-adam.html">下一课：29 · Adam →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

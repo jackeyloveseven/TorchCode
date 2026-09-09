@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>25 · Flash Attention — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0024-rope.html">← 24 · RoPE</a><span>›</span><span>第 25 课：Flash Attention</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:61%"></div></div>
+  <div class="progress-label">25 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 25 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>Flash Attention</h1>
+    <p class="lesson-tagline">IO 感知的注意力：分块计算 + online softmax，消灭 O(S²) 显存瓶颈。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解标准注意力的 HBM IO 瓶颈</li>
+      <li>掌握 online softmax（增量 max/sum 更新）</li>
+      <li>能写出分块 Flash Attention 的 Python 实现</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>标准注意力的瓶颈</h3>
+    <pre><code># 标准注意力：
+S = Q @ K.T             # (S, S) → 写入 HBM
+A = softmax(S)          # 从 HBM 读 S，写 A
+O = A @ V               # 从 HBM 读 A，写 O
+# HBM 读写量：O(S²) → 对 GPU 来说 IO 是真正瓶颈</code></pre>
+
+    <h3>Online Softmax（流式最大值）</h3>
+    <pre><code># 普通 softmax 需要看完所有元素才知道 max 和 sum
+# Online softmax：逐块更新 max 和 sum
+# 新块到来时，用新 max 修正旧的分子/分母：
+m_new = max(m_old, max(block))
+sum_new = sum_old * exp(m_old - m_new) + sum(exp(block - m_new))
+# 关键：exp(m_old - m_new) 是修正因子</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现（教学版）</h2>
+    <pre><code>def flash_attention_ref(Q, K, V, block_size=64):
+    B, S, d_k = Q.shape
+    scale = math.sqrt(d_k)
+    O = torch.zeros_like(Q)
+
+    for b in range(B):
+        q = Q[b]  # (S, dk)
+        k = K[b]
+        v = V[b]
+        # 对每个 Q 块
+        for i in range(0, S, block_size):
+            q_i = q[i:i+block_size]     # (Br, dk)
+            m_i = torch.full((len(q_i),), float('-inf'))
+            l_i = torch.zeros(len(q_i))
+            o_i = torch.zeros_like(q_i)
+
+            # 扫描 K/V 块（在 SRAM 中累积）
+            for j in range(0, S, block_size):
+                k_j = k[j:j+block_size]
+                v_j = v[j:j+block_size]
+                s_ij = (q_i @ k_j.T) / scale   # (Br, Bc)
+
+                m_ij = s_ij.max(dim=-1).values
+                m_new = torch.maximum(m_i, m_ij)
+                exp_s = torch.exp(s_ij - m_new.unsqueeze(1))  # stable
+                l_new = l_i * torch.exp(m_i - m_new) + exp_s.sum(dim=-1)
+                o_i   = o_i * (l_i * torch.exp(m_i - m_new)).unsqueeze(1) / l_new.unsqueeze(1) + \
+                        (exp_s @ v_j) / l_new.unsqueeze(1)
+                m_i, l_i = m_new, l_new
+            O[b, i:i+block_size] = o_i
+    return O</code></pre>
+
+    <div class="callout callout-ok">
+      <strong>实践中：</strong>直接用 <code>F.scaled_dot_product_attention</code>（PyTorch 2.0+）
+      或 <code>flash_attn</code> 库，内部已高度优化的 CUDA kernel。
+      面试只需理解思路，不需手写 CUDA。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！Flash Attention 的核心目标是减少 HBM IO，通过分块使中间矩阵留在 SRAM 中。"
+         data-feedback-incorrect="✗ 不对。Flash Attention 的主要目标是减少 HBM 内存读写次数（IO），不是减少浮点运算量。">
+      <h3>Q1 · Flash Attention 的核心优化</h3>
+      <p>Flash Attention 相比标准注意力，主要优化的是什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 减少 FLOPs（浮点运算量）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 减少参数量</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 减少 HBM IO（内存读写次数）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 减少注意力头数</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！Online softmax 允许逐块更新 max 和 sum，不需要一次看完所有 token。"
+         data-feedback-incorrect="✗ 不对。Online softmax 是分块注意力的关键：允许增量更新 max 和 sum，无需存储完整 S×S 矩阵。">
+      <h3>Q2 · Online Softmax</h3>
+      <p>Flash Attention 能分块计算的关键技术是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 量化 Q/K/V</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> Online softmax（增量更新 max/sum）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 稀疏注意力掩码</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 低秩近似</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！Flash Attention 省去了 HBM 上的 S×S 注意力矩阵，显存从 O(S²) 降到 O(S)。"
+         data-feedback-incorrect="✗ 不对。Flash Attention 不存 S×S 注意力矩阵（留在 SRAM 中），显存是 O(S)。">
+      <h3>Q3 · 显存节省</h3>
+      <p>Flash Attention 将注意力的 HBM 显存从 O(S²) 降到？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> O(S)（线性）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> O(S log S)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> O(√S)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> O(1)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code># 核心思路（伪代码）：
+for i in range(0, S, Br):           # 遍历 Q 块
+    m = -inf; l = 0; O = 0
+    for j in range(0, S, Bc):       # 遍历 K/V 块
+        s = Q[i] @ K[j].T / sqrt(dk)
+        m_new = max(m, s.max())
+        # online softmax 更新：
+        l = l * exp(m - m_new) + exp(s - m_new).sum()
+        O = O * exp(m - m_new) / l_ratio + exp(s - m_new) @ V[j] / l
+        m = m_new
+# 结果等价于完整的 softmax(QK^T/√d)@V</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>问题</strong>：标准注意力 S×S 矩阵写 HBM，IO 是瓶颈</li>
+      <li><strong>方案</strong>：分块计算，中间结果留 SRAM，用 online softmax 累积</li>
+      <li><strong>显存</strong>：O(S²) → O(S)（不存注意力矩阵）</li>
+      <li><strong>实践</strong>：PyTorch 2.0 的 <code>F.scaled_dot_product_attention</code> 已内置</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Flash Attention 2 和 3 的区别？"，"Online softmax 的数学证明？"</div>
+  <nav class="lesson-nav">
+    <a href="./0024-rope.html">← 24 · RoPE</a>
+    <a href="./0026-lora.html">下一课：26 · LoRA →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

@@ -1,16 +1,16 @@
 """Multi-Head Attention task."""
 
 TASK = {
-    "title": "Multi-Head Attention",
+    "title": "多头注意力",
     "difficulty": "Hard",
     "function_name": "MultiHeadAttention",
     "hint": (
-        "Use nn.Linear for Q/K/V/O projections. d_k = d_model // num_heads. "
-        "Reshape to (B, heads, S, d_k), SDPA per head, concat, output projection."
+        "使用 nn.Linear 做 Q/K/V/O 投影。d_k = d_model // num_heads。"
+        "重塑为 (B, heads, S, d_k)，逐头计算 SDPA，拼接后做输出投影。"
     ),
     "tests": [
         {
-            "name": "Output shape",
+            "name": "输出形状",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -22,7 +22,7 @@ assert out.shape == (B, S, D), f'Shape mismatch: {out.shape} vs {(B, S, D)}'
 """,
         },
         {
-            "name": "Uses nn.Linear with correct shapes",
+            "name": "使用形状正确的 nn.Linear",
             "code": """
 import torch, torch.nn as nn
 mha = {fn}(d_model=32, num_heads=4)
@@ -34,7 +34,7 @@ for name in ['W_q', 'W_k', 'W_v', 'W_o']:
 """,
         },
         {
-            "name": "Numerical correctness vs reference",
+            "name": "数值与参考实现一致",
             "code": """
 import torch, torch.nn as nn, math
 torch.manual_seed(0)
@@ -56,7 +56,7 @@ assert torch.allclose(out, ref, atol=1e-5), 'Output does not match reference'
 """,
         },
         {
-            "name": "Gradient flow",
+            "name": "梯度流",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -70,7 +70,7 @@ assert mha.W_o.weight.grad is not None, 'W_o.weight.grad is None'
 """,
         },
         {
-            "name": "Cross-attention (seq_q != seq_k)",
+            "name": "交叉注意力（seq_q != seq_k）",
             "code": """
 import torch
 mha = {fn}(d_model=32, num_heads=4)
@@ -82,7 +82,7 @@ assert out.shape == (1, 3, 32), f'Cross-attention shape: {out.shape}'
 """,
         },
         {
-            "name": "Different heads give different outputs",
+            "name": "不同注意力头输出不同",
             "code": """
 import torch
 torch.manual_seed(42)

@@ -1,13 +1,13 @@
 """ReLU implementation task."""
 
 TASK = {
-    "title": "Implement ReLU",
+    "title": "实现 ReLU",
     "difficulty": "Easy",
     "function_name": "relu",
-    "hint": "ReLU(x) = max(0, x). Think about element-wise comparison with zero.",
+    "hint": "ReLU(x) = max(0, x)。思考如何对每个元素与零进行比较。",
     "tests": [
         {
-            "name": "Basic values",
+            "name": "基本数值",
             "code": """
 import torch
 x = torch.tensor([-2., -1., 0., 1., 2.])
@@ -18,7 +18,7 @@ assert torch.allclose(out, expected), f'Wrong Answer: {out} vs {expected}'
 """,
         },
         {
-            "name": "2-D tensor",
+            "name": "二维张量",
             "code": """
 import torch
 x = torch.randn(4, 8)
@@ -29,7 +29,7 @@ assert torch.allclose(out, x.clamp(min=0)), 'Value mismatch on random input'
 """,
         },
         {
-            "name": "Gradient check",
+            "name": "梯度检验",
             "code": """
 import torch
 x = torch.tensor([-1., 0., 1., 2.], requires_grad=True)
@@ -43,7 +43,7 @@ assert x.grad[1] in (0., 1.), f'grad at x=0 should be 0 or 1, got {x.grad[1]}'
 """,
         },
         {
-            "name": "Performance",
+            "name": "性能测试",
             "code": """
 import torch, time
 big = torch.randn(1024, 1024)

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>36 · INT8 Quantization — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0035-bpe.html">← 35 · BPE</a><span>›</span><span>第 36 课：INT8 量化</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:87.8%"></div></div>
+  <div class="progress-label">36 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 36 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>INT8 量化</h1>
+    <p class="lesson-tagline">per-row 缩放因子，round + clamp 到 [-128, 127]，显存减半。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解线性量化的缩放公式</li>
+      <li>掌握 per-row（per-tensor）量化的实现</li>
+      <li>理解反量化（dequantize）还原原始值</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>线性量化</h3>
+    <pre><code># 量化：float32 → int8
+# scale = max(abs(row)) / 127      # 每行单独缩放
+# q = round(x / scale).clamp(-128, 127).to(int8)
+
+# 反量化：int8 → float32
+# x_approx = q.float() * scale
+
+# 误差来源：round 四舍五入的量化误差</code></pre>
+
+    <h3>Per-tensor vs Per-row vs Per-channel</h3>
+    <table>
+      <tr><th>粒度</th><th>scale 数量</th><th>精度</th><th>用途</th></tr>
+      <tr><td>Per-tensor</td><td>1</td><td>最低</td><td>激活量化</td></tr>
+      <tr><td>Per-row</td><td>行数</td><td>中等</td><td>权重量化（常见）</td></tr>
+      <tr><td>Per-channel</td><td>通道数</td><td>最高</td><td>卷积权重</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def quantize_int8(x):
+    # x: (N, D) float32
+    scale = x.abs().max(dim=-1, keepdim=True).values / 127.0
+    scale = scale.clamp(min=1e-8)   # 避免除零
+    q = (x / scale).round().clamp(-128, 127).to(torch.int8)
+    return q, scale
+
+def dequantize_int8(q, scale):
+    # q: (N, D) int8, scale: (N, 1) float32
+    return q.float() * scale
+
+# 演示：量化误差很小
+x = torch.randn(4, 8)
+q, scale = quantize_int8(x)
+x_hat = dequantize_int8(q, scale)
+print(f"最大误差: {(x - x_hat).abs().max():.4f}")</code></pre>
+
+    <div class="callout">
+      <strong>实际应用：</strong>bitsandbytes 库的 8-bit Adam 和 LLM.int8() 就是基于这个原理。
+      权重量化为 INT8，计算时反量化（或混合精度计算），推理速度 ≈ 2x，精度损失很小。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！scale = max_abs / 127，使最大绝对值刚好映射到 ±127（INT8 范围）。"
+         data-feedback-incorrect="✗ 不对。scale 是让 [-127, 127] 恰好覆盖原始数据的最大绝对值。">
+      <h3>Q1 · Scale 计算</h3>
+      <p>per-row INT8 量化的 scale 是如何计算的？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 行均值</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 行标准差</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 行最大绝对值 / 127</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 固定常数 0.01</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！INT8 存储 1 字节（-128 到 127），FP32 存储 4 字节，显存节省约 4x（实际约 3-4x，因为 scale 占少量空间）。"
+         data-feedback-incorrect="✗ 不对。INT8 占 1 字节，FP32 占 4 字节，权重大小降低约 4x。">
+      <h3>Q2 · 显存节省</h3>
+      <p>FP32 量化为 INT8，权重显存降低多少倍？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 2x（FP16 已做了 2x）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 约 4x（4 字节 → 1 字节）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 8x</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 无节省（scale 也要存储）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！反量化：q.float() * scale 还原近似浮点值；精度损失来自 round() 的量化误差，最多 ±0.5 * scale。"
+         data-feedback-incorrect="✗ 不对。反量化 = q.float() * scale，误差来自 round()，最大为 0.5 * scale / 127。">
+      <h3>Q3 · 反量化</h3>
+      <p>从 INT8 还原 float32 的操作是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> q.float() * scale</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> q / scale</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> q + scale</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> sigmoid(q * scale)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def quantize_int8(x):
+    scale = x.abs().max(dim=-1, keepdim=True).values / 127.0
+    scale = scale.clamp(min=1e-8)
+    q = (x / scale).round().clamp(-128, 127).to(torch.int8)
+    return q, scale
+
+def dequantize_int8(q, scale):
+    return q.float() * scale</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>量化公式</strong>：<code>round(x/scale).clamp(-128,127)</code></li>
+      <li><strong>scale</strong>：<code>max_abs / 127</code>，per-row 保证精度</li>
+      <li><strong>反量化</strong>：<code>q.float() * scale</code></li>
+      <li><strong>显存</strong>：FP32→INT8 约 4x，FP16→INT8 约 2x</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："GPTQ 和 AWQ 量化有什么改进？"，"训练时量化（QAT）和推理量化的区别？"</div>
+  <nav class="lesson-nav">
+    <a href="./0035-bpe.html">← 35 · BPE</a>
+    <a href="./0037-dpo-loss.html">下一课：37 · DPO Loss →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

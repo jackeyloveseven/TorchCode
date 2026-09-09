@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>06 · MultiHead Attention — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0005-attention.html">← 05 · Attention</a><span>›</span><span>第 06 课：MultiHead Attention</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:14.6%"></div></div>
+  <div class="progress-label">6 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 06 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>多头注意力</h1>
+    <p class="lesson-tagline">h 个注意力头并行，关键是 reshape 成 <code>(B, h, S, d_k)</code>。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解多头注意力如何让模型从不同子空间关注不同位置</li>
+      <li>掌握 <code>view + transpose</code> 实现多头分割的技巧</li>
+      <li>理解最终 concat + W_o 投影的作用</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <code class="formula">MultiHead(Q,K,V) = Concat(head₁,…,head_h) · W<sup>O</sup></code>
+    <p>其中每个头 <code>head_i = Attention(Q·W_i^Q, K·W_i^K, V·W_i^V)</code></p>
+    <p><strong>为什么多头？</strong>单头注意力只能在一个表示子空间中关注。多头让模型<em>同时</em>
+    关注不同位置的不同语义信息（句法、语义、共指…），最后拼接融合。</p>
+
+    <h3>关键 reshape 流程</h3>
+    <pre><code># 输入 x: (B, S, D)，D = h * d_k
+Q = W_q(x)                           # (B, S, D)
+Q = Q.view(B, S, h, d_k)             # 分成 h 个头
+Q = Q.transpose(1, 2)                # (B, h, S, d_k)
+# 对每个头独立做注意力，结果: (B, h, S, d_k)
+# 再 transpose + reshape 拼回 (B, S, D)
+out = out.transpose(1, 2).contiguous().view(B, S, D)</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math, torch
+import torch.nn as nn
+
+class MultiHeadAttention:
+    def __init__(self, d_model, num_heads):
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, Q, K, V):
+        B, S, D = Q.shape
+        h, dk = self.num_heads, self.d_k
+
+        # 投影 + 分头
+        q = self.W_q(Q).view(B, S, h, dk).transpose(1, 2)   # (B, h, S, dk)
+        k = self.W_k(K).view(B, -1, h, dk).transpose(1, 2)
+        v = self.W_v(V).view(B, -1, h, dk).transpose(1, 2)
+
+        # 注意力
+        scores  = (q @ k.transpose(-2, -1)) / math.sqrt(dk)  # (B, h, S, S)
+        weights = torch.softmax(scores, dim=-1)
+        out = weights @ v                                      # (B, h, S, dk)
+
+        # 合并头
+        out = out.transpose(1, 2).contiguous().view(B, S, D)  # (B, S, D)
+        return self.W_o(out)</code></pre>
+
+    <div class="callout callout-warn">
+      <strong>contiguous()：</strong>transpose 不移动内存，只改 stride，导致张量非连续。
+      <code>.view()</code> 要求连续内存，所以要先 <code>.contiguous()</code>，
+      或者改用 <code>.reshape()</code>（内部会自动处理）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！d_k = d_model / num_heads = 512 / 8 = 64。"
+         data-feedback-incorrect="✗ 不对。d_k 是每个头的维度，等于 d_model 除以头数。">
+      <h3>Q1 · 头维度</h3>
+      <p><code>d_model=512, num_heads=8</code> 时，每个头的维度 <code>d_k</code> 是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 512</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 64</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 128</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 4096</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！transpose 后 shape 变 (B, h, S, dk)，注意力在最后两维 (S, dk) 操作。"
+         data-feedback-incorrect="✗ 不对。view 后是 (B, S, h, dk)，transpose(1,2) 交换 S 和 h 两维。">
+      <h3>Q2 · reshape 流程</h3>
+      <p><code>Q.view(B, S, h, dk).transpose(1, 2)</code> 的结果 shape？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> (B, S, h, dk)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> (B, dk, S, h)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> (B, h, S, dk)</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> (h, B, S, dk)</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！contiguous() 确保内存连续，否则 view() 会报错。"
+         data-feedback-incorrect="✗ 不对。transpose 返回非连续张量，view() 需要连续内存，必须先 contiguous()。">
+      <h3>Q3 · contiguous</h3>
+      <p>合并头时为什么需要 <code>.contiguous()</code>？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> transpose 返回非连续张量，view() 要求连续内存</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 让梯度能正常反向传播</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 提升计算速度</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 合并多个张量时的必要步骤</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class MultiHeadAttention:
+    def __init__(self, d_model, num_heads):
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    def forward(self, Q, K, V):
+        B, S, D = Q.shape
+        h, dk = self.num_heads, self.d_k
+        q = self.W_q(Q).view(B, S, h, dk).transpose(1, 2)
+        k = self.W_k(K).view(B, -1, h, dk).transpose(1, 2)
+        v = self.W_v(V).view(B, -1, h, dk).transpose(1, 2)
+        scores  = (q @ k.transpose(-2, -1)) / math.sqrt(dk)
+        weights = torch.softmax(scores, dim=-1)
+        out = (weights @ v).transpose(1, 2).contiguous().view(B, S, D)
+        return self.W_o(out)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>分头</strong>：<code>view(B,S,h,dk).transpose(1,2)</code> → <code>(B,h,S,dk)</code></li>
+      <li><strong>合并</strong>：<code>transpose(1,2).contiguous().view(B,S,D)</code></li>
+      <li><strong>contiguous</strong>：transpose 后必须调用，或改用 reshape</li>
+      <li><strong>延伸</strong>：GQA（num_kv_heads &lt; num_heads），KV 头被多组 Q 头共享</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："为什么不用 reshape 代替 contiguous+view？"，"多头注意力的参数量是多少？"</div>
+  <nav class="lesson-nav">
+    <a href="./0005-attention.html">← 05 · Attention</a>
+    <a href="./0007-batchnorm.html">下一课：07 · BatchNorm →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

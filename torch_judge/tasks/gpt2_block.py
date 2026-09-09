@@ -1,13 +1,13 @@
 """GPT-2 Transformer Block task."""
 
 TASK = {
-    "title": "GPT-2 Transformer Block",
+    "title": "GPT-2 Transformer 块",
     "difficulty": "Hard",
     "function_name": "GPT2Block",
-    "hint": "Pre-norm: x = x + attn(ln1(x)), x = x + mlp(ln2(x)). MLP: Linear(d, 4d) -> GELU -> Linear(4d, d). Attention must be causal. Inherit from nn.Module.",
+    "hint": "Pre-Norm：x = x + attn(ln1(x))，x = x + mlp(ln2(x))。MLP：Linear(d, 4d) -> GELU -> Linear(4d, d)。注意力必须是因果的。继承自 nn.Module。",
     "tests": [
         {
-            "name": "Output shape",
+            "name": "输出形状",
             "code": """
 import torch, torch.nn as nn
 torch.manual_seed(0)
@@ -18,7 +18,7 @@ assert out.shape == (2, 8, 64), f'Shape mismatch: {out.shape}'
 """,
         },
         {
-            "name": "Has LayerNorm (pre-norm architecture)",
+            "name": "包含 LayerNorm（Pre-Norm 架构）",
             "code": """
 import torch, torch.nn as nn
 block = {fn}(d_model=32, num_heads=4)
@@ -27,7 +27,7 @@ assert hasattr(block, 'ln2') and isinstance(block.ln2, nn.LayerNorm), 'Need self
 """,
         },
         {
-            "name": "MLP has 4x expansion with GELU",
+            "name": "MLP 具有 4 倍扩展与 GELU",
             "code": """
 import torch, torch.nn as nn
 block = {fn}(d_model=32, num_heads=4)
@@ -39,7 +39,7 @@ assert linears[-1].weight.shape == (32, 128), f'MLP last layer: {linears[-1].wei
 """,
         },
         {
-            "name": "Causal masking — future doesn't affect past",
+            "name": "因果掩码——未来不影响过去",
             "code": """
 import torch
 torch.manual_seed(0)
@@ -53,7 +53,7 @@ assert torch.allclose(out1[:, :4], out2[:, :4], atol=1e-5), 'Future tokens affec
 """,
         },
         {
-            "name": "Gradient flow to all parameters",
+            "name": "梯度流至所有参数",
             "code": """
 import torch
 torch.manual_seed(0)

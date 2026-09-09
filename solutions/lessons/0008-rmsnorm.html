@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>08 · RMSNorm — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0007-batchnorm.html">← 07 · BatchNorm</a><span>›</span><span>第 08 课：RMSNorm</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:19.5%"></div></div>
+  <div class="progress-label">8 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 08 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>实现 RMSNorm</h1>
+    <p class="lesson-tagline">LLaMA/Gemma 的归一化选择——去掉均值，只除 RMS，更简洁更快。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 RMSNorm 和 LayerNorm 的区别（去掉减均值步骤）</li>
+      <li>掌握 <code>x.pow(2).mean()</code> 计算均方根</li>
+      <li>理解为什么 LLM 更偏爱 RMSNorm</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <code class="formula">RMSNorm(x) = x / RMS(x) · w，其中 RMS(x) = √(mean(x²) + ε)</code>
+
+    <h3>与 LayerNorm 的对比</h3>
+    <table>
+      <tr><th></th><th>LayerNorm</th><th>RMSNorm</th></tr>
+      <tr><td>减均值</td><td>是（中心化）</td><td>否</td></tr>
+      <tr><td>除以</td><td>√(var + ε)</td><td>√(mean(x²) + ε)</td></tr>
+      <tr><td>可学习参数</td><td>γ（scale）+ β（shift）</td><td>w（scale 只）</td></tr>
+      <tr><td>代表模型</td><td>BERT, GPT-2</td><td>LLaMA, Gemma, Mistral</td></tr>
+    </table>
+    <p>RMSNorm 省略了减均值的计算，在实践中效果相当，但速度更快（约快 7~15%）。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def rms_norm(x, weight, eps=1e-6):
+    rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
+    return x / rms * weight</code></pre>
+
+    <div class="callout">
+      <strong>两行，三步：</strong>①平方 → ②均值 → ③开方，得到 RMS；然后除以 RMS，乘以可学习 weight。
+      <code>keepdim=True</code> 保证广播正确。
+    </div>
+
+    <h3>ε 的作用</h3>
+    <p>当 x 全为 0 时，RMS=0，除法会得到 NaN 或 inf。ε（默认 1e-6）防止分母为 0。
+    注意 RMSNorm 通常用更小的 ε（1e-6）而不是 LayerNorm 的 1e-5。</p>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！RMSNorm 不减均值，只除以均方根，计算量更少。"
+         data-feedback-incorrect="✗ 不对。RMSNorm 的关键简化是去掉了减均值（中心化）这一步。">
+      <h3>Q1 · 核心区别</h3>
+      <p>RMSNorm 相比 LayerNorm 省略了什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 可学习的 scale 参数</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 减均值（中心化）步骤</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 除以方差的步骤</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> ε 数值稳定项</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！mean(x²) 先平方再平均，得到均方值（mean square），再开方就是均方根（RMS）。"
+         data-feedback-incorrect="✗ 不对。x.pow(2).mean() = mean(x²)，是 x 平方后的平均值（均方），不是方差。">
+      <h3>Q2 · 计算</h3>
+      <p><code>x.pow(2).mean(dim=-1)</code> 计算的是什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> x 的方差（var）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> x 的标准差（std）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> x 的均方值（mean of squares）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> x 的绝对均值（mean of abs）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！RMSNorm 只有一个 scale 参数 w，没有 shift（bias）参数 β。"
+         data-feedback-incorrect="✗ 不对。RMSNorm 没有 β（shift）参数，只有 w（scale）。">
+      <h3>Q3 · 可学习参数</h3>
+      <p>RMSNorm 有哪些可学习参数？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 只有 w（scale），没有 β（shift）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> γ（scale）和 β（shift）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 没有可学习参数</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 只有 β（shift），没有 scale</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>代码填空</h2>
+    <div class="fill-blank" data-answers="x.pow(2).mean(dim=-1, keepdim=true)|x.pow(2).mean(dim=-1, keepdim=True)"
+         data-hint="x.pow(2).mean(dim=-1, keepdim=True)"
+         data-feedback-correct="✓ 正确！先平方，再均值，keepdim=True 保证广播。">
+      <pre><code>def rms_norm(x, weight, eps=1e-6):
+    rms = torch.sqrt(____________________ + eps)
+    return x / rms * weight</code></pre>
+      <div class="blank-row">
+        <input class="exercise-input" type="text" placeholder="填均方计算表达式" spellcheck="false" autocomplete="off" style="min-width:300px">
+        <button class="btn btn-primary check-btn">检验</button>
+      </div>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def rms_norm(x, weight, eps=1e-6):
+    rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
+    return x / rms * weight</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>x / √(mean(x²) + ε) * w</code></li>
+      <li><strong>与 LayerNorm 的区别</strong>：不减均值，只除 RMS，无 β 参数</li>
+      <li><strong>使用场景</strong>：LLaMA、Gemma、Mistral 等现代 LLM</li>
+      <li><strong>ε</strong>：RMSNorm 通常用 1e-6，LayerNorm 用 1e-5</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："为什么 LLM 更喜欢 RMSNorm？"，"Pre-norm 和 Post-norm 哪个更稳定？"</div>
+  <nav class="lesson-nav">
+    <a href="./0007-batchnorm.html">← 07 · BatchNorm</a>
+    <a href="./0009-causal-attention.html">下一课：09 · Causal Attention →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

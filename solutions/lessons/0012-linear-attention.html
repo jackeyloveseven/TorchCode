@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>12 · Linear Attention — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0011-sliding-window.html">← 11 · Sliding Window</a><span>›</span><span>第 12 课：Linear Attention</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:29.3%"></div></div>
+  <div class="progress-label">12 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 12 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>线性注意力</h1>
+    <p class="lesson-tagline">核技巧消灭 softmax，结合律改变计算顺序，复杂度从 O(S²D) 降到 O(SD²)。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解用核特征映射替换 softmax 的思想</li>
+      <li>掌握结合律技巧：先算 K<sup>T</sup>V，避免 S×S 矩阵</li>
+      <li>理解 <code>elu + 1</code> 特征映射保证非负的原因</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <p>标准注意力：<code>softmax(QK<sup>T</sup>/√d) · V</code>，需要 O(S²) 空间存中间矩阵。</p>
+    <p>线性注意力用核特征映射 φ 替换 softmax：</p>
+    <code class="formula">LinearAttn(Q,K,V) = φ(Q) · (φ(K)<sup>T</sup>V) / (φ(Q) · Σφ(K))</code>
+
+    <h3>关键：矩阵乘法结合律</h3>
+    <pre><code># 标准：先算 S×S 注意力矩阵（S可能很大）
+out = softmax(Q @ K.T) @ V            # O(S²D) 时间，O(S²) 空间
+
+# 线性：先算 D×D 的 K^T V
+KV  = K_prime.transpose(1,2) @ V     # (B, D_k, D_v)，O(SD²)
+out = Q_prime @ KV                   # (B, S, D_v)，O(SD²)
+# 总体 O(SD²) 时间，O(D²) 空间！</code></pre>
+
+    <h3>为什么用 φ(x) = elu(x) + 1？</h3>
+    <p>核技巧要求特征映射非负（保证"注意力权重"非负）。<code>elu(x) + 1</code>：
+    x&gt;0 时 = x+1 &gt; 0，x&lt;0 时 = exp(x) &gt; 0，始终正。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def linear_attention(Q, K, V):
+    # φ(x) = elu(x) + 1
+    Q_prime = F.elu(Q) + 1   # (B, S, D_k)
+    K_prime = F.elu(K) + 1
+
+    KV  = torch.bmm(K_prime.transpose(1, 2), V)      # (B, D_k, D_v)
+    Z   = K_prime.sum(dim=1, keepdim=True)            # (B, 1, D_k)，归一化分母
+
+    num = torch.bmm(Q_prime, KV)                      # (B, S, D_v)
+    den = torch.bmm(Q_prime, Z.transpose(1, 2))       # (B, S, 1)
+    return num / (den + 1e-6)</code></pre>
+
+    <div class="callout">
+      <strong>Z 的含义：</strong><code>Z = Σ_j φ(K_j)</code>，相当于所有 K 特征之和，
+      是分母（归一化项），确保输出是加权平均而不是加权和。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！先算 K^T V（D×D），再用 Q 乘，避免了 S×S 中间矩阵。"
+         data-feedback-incorrect="✗ 不对。线性注意力的关键是改变矩阵乘法顺序：先 K^T V，再 Q * (K^T V)。">
+      <h3>Q1 · 复杂度优化</h3>
+      <p>线性注意力如何避免 O(S²) 复杂度？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 稀疏化 Q/K/V</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 量化 Q/K/V 为低精度</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 改变矩阵乘法顺序：先 K<sup>T</sup>V（D×D），再 Q*(K<sup>T</sup>V）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 用滑动窗口限制关注范围</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！elu(x)+1 始终为正：x>0 时等于 x+1，x<0 时等于 exp(x)（在 0~1 之间）。"
+         data-feedback-incorrect="✗ 不对。elu(x)+1 在 x>0 时 = x+1，x<0 时 = exp(x)，始终严格大于 0。">
+      <h3>Q2 · 特征映射</h3>
+      <p>为什么选 φ(x) = elu(x) + 1 而不是直接用 relu(x)？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> relu 计算更慢</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> relu 在 x&lt;0 时为 0，导致分母为 0；elu+1 始终严格正</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> elu 更接近 softmax 的行为</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> relu 不支持梯度</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！Z = Σφ(K_j) 是归一化分母，保证输出是加权平均而非加权和。"
+         data-feedback-incorrect="✗ 不对。Z 对应标准注意力中 softmax 行和为 1 的归一化项。">
+      <h3>Q3 · Z 的作用</h3>
+      <p>代码中 <code>Z = K_prime.sum(dim=1)</code> 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 归一化分母，对应 softmax 的行和为 1</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 计算 K 的均值</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 数值稳定性，类似 max 减法</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 没有实际意义，只是 placeholder</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def linear_attention(Q, K, V):
+    Q_prime = F.elu(Q) + 1
+    K_prime = F.elu(K) + 1
+    KV  = torch.bmm(K_prime.transpose(1, 2), V)   # (B, D_k, D_v)
+    Z   = K_prime.sum(dim=1, keepdim=True)          # (B, 1, D_k)
+    num = torch.bmm(Q_prime, KV)                   # (B, S, D_v)
+    den = torch.bmm(Q_prime, Z.transpose(1, 2))    # (B, S, 1)
+    return num / (den + 1e-6)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>核心思路</strong>：结合律改变计算顺序，先算 K<sup>T</sup>V</li>
+      <li><strong>特征映射</strong>：φ(x) = elu(x) + 1，保证非负</li>
+      <li><strong>复杂度</strong>：O(SD²) 时间，O(D²) 额外空间，摆脱 S² 依赖</li>
+      <li><strong>代价</strong>：近似 softmax，质量略低；适合超长序列</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："线性注意力和 RNN 有什么关系？"，"为什么线性注意力实际用得少？"</div>
+  <nav class="lesson-nav">
+    <a href="./0011-sliding-window.html">← 11 · Sliding Window</a>
+    <a href="./0013-gpt2-block.html">下一课：13 · GPT-2 Block →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

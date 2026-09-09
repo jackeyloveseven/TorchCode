@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>27 · ViT Patch Embed — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0026-lora.html">← 26 · LoRA</a><span>›</span><span>第 27 课：ViT Patch</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:65.9%"></div></div>
+  <div class="progress-label">27 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 27 课</span><span class="badge badge-medium">Medium</span></div>
+    <h1>ViT Patch Embedding</h1>
+    <p class="lesson-tagline">图像切块 → 线性投影：用 unfold 或 Conv2D 将图片变成 token 序列。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 ViT 如何将图片转为 token 序列</li>
+      <li>掌握 unfold 切块 + 线性投影的实现</li>
+      <li>理解 [CLS] token 和位置编码的作用</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>ViT 的输入流程</h3>
+    <pre><code># 图像: (B, C, H, W)
+# 步骤：
+# 1. 切块：将图像分成 P×P 的 patch
+#    每个 patch 的维度：C * P * P
+#    patch 数量：N = (H/P) * (W/P)
+# 2. 线性投影：每个 patch 投影到 d_model 维
+#    输出形状：(B, N, d_model)
+# 3. 加 CLS token（可选）：(B, N+1, d_model)
+# 4. 加位置编码：(B, N+1, d_model)</code></pre>
+
+    <h3>两种实现方式</h3>
+    <pre><code># 方法 1：unfold + linear（显式）
+x_patches = x.unfold(2, P, P).unfold(3, P, P)  # 切块
+x_flat = x_patches.reshape(B, -1, C*P*P)        # 展平
+
+# 方法 2：Conv2d，kernel=P，stride=P（等价）
+proj = nn.Conv2d(C, d_model, kernel_size=P, stride=P)
+out = proj(x).flatten(2).transpose(1, 2)  # (B, N, d_model)</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>class PatchEmbedding(nn.Module):
+    def __init__(self, img_size=224, patch_size=16,
+                 in_channels=3, d_model=768):
+        super().__init__()
+        self.patch_size = patch_size
+        num_patches = (img_size // patch_size) ** 2
+
+        # Conv2d 等价于 unfold + linear
+        self.proj = nn.Conv2d(
+            in_channels, d_model,
+            kernel_size=patch_size, stride=patch_size
+        )
+        # CLS token（可学习）
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        # 位置编码（num_patches + 1 个 cls）
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, num_patches + 1, d_model)
+        )
+
+    def forward(self, x):
+        B = x.shape[0]
+        # (B, d_model, H/P, W/P) → (B, N, d_model)
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        # 前置 CLS token
+        cls = self.cls_token.expand(B, -1, -1)
+        x   = torch.cat([cls, x], dim=1)         # (B, N+1, d_model)
+        return x + self.pos_embed</code></pre>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！224/16 = 14，每维 14 个 patch，共 14×14 = 196 个 patch。"
+         data-feedback-incorrect="✗ 不对。patch 数 = (224/16)² = 14² = 196。">
+      <h3>Q1 · Patch 数量</h3>
+      <p>图像 224×224，patch_size=16，产生多少个 patch？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 256</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 224</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 196</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 14</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！CLS token 聚合全局信息，ViT 用它做分类：输出层只取 CLS token 的表示。"
+         data-feedback-incorrect="✗ 不对。CLS token 的作用是作为全局信息聚合点，用于最终的分类任务。">
+      <h3>Q2 · CLS Token</h3>
+      <p>ViT 中 [CLS] token 的作用是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 作为 padding，对齐序列长度</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 聚合全局信息，用于最终分类</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 表示图像的左上角 patch</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 标记序列结束</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！Conv2d(C, d, kernel=P, stride=P) 等价于 unfold(P, P) + linear：kernel 大小等于 patch 大小，步幅也等于 patch 大小（无重叠）。"
+         data-feedback-incorrect="✗ 不对。stride=P 时，Conv2d 恰好等价于非重叠的 patch 投影。">
+      <h3>Q3 · Conv2D 等价</h3>
+      <p><code>nn.Conv2d(C, d, kernel_size=P, stride=P)</code> 等价于什么操作？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 非重叠 unfold + 线性投影</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 全局平均池化</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 图像缩放 + 全连接</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 标准 3×3 卷积的特例</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>class PatchEmbedding(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_channels=3, d_model=768):
+        super().__init__()
+        num_patches = (img_size // patch_size) ** 2
+        self.proj = nn.Conv2d(in_channels, d_model, kernel_size=patch_size, stride=patch_size)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, d_model))
+
+    def forward(self, x):
+        B = x.shape[0]
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        cls = self.cls_token.expand(B, -1, -1)
+        return torch.cat([cls, x], dim=1) + self.pos_embed</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>切块</strong>：<code>Conv2d(C, d, kernel=P, stride=P)</code> 是最简洁实现</li>
+      <li><strong>Patch 数</strong>：<code>(H/P) * (W/P)</code></li>
+      <li><strong>CLS token</strong>：<code>expand(B,-1,-1)</code>，不用 repeat（节省内存）</li>
+      <li><strong>序列长度</strong>：N + 1（加上 CLS）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："DeiT 和 ViT 的区别？"，"为什么 ViT 需要位置编码？"</div>
+  <nav class="lesson-nav">
+    <a href="./0026-lora.html">← 26 · LoRA</a>
+    <a href="./0028-moe.html">下一课：28 · MoE →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

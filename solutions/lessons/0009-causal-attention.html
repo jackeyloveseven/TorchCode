@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>09 · Causal Attention — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0008-rmsnorm.html">← 08 · RMSNorm</a><span>›</span><span>第 09 课：Causal Attention</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:21.9%"></div></div>
+  <div class="progress-label">9 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 09 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>因果自注意力</h1>
+    <p class="lesson-tagline">GPT 的核心：上三角掩码 + <code>masked_fill(-inf)</code>，禁止"看未来"。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解因果掩码（causal mask）的含义和构造方式</li>
+      <li>掌握 <code>torch.triu</code> 和 <code>masked_fill</code> 的用法</li>
+      <li>理解为什么用 <code>-inf</code> 而不是 0 来掩码</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <p>自回归语言模型（GPT 风格）在预测第 i 个 token 时，只能看到位置 0 到 i-1 的 token，
+    不能"偷看"未来。因果注意力通过掩码实现这一约束：</p>
+    <pre><code>scores[i, j] = QK^T / sqrt(d_k),  if j <= i  (能看到)
+scores[i, j] = -inf,               if j > i   (不能看)</code></pre>
+    <p>softmax 后 <code>exp(-inf) = 0</code>，所以未来位置的注意力权重为 0。</p>
+
+    <h3>上三角掩码的构造</h3>
+    <pre><code>S = 4  # 序列长度
+mask = torch.triu(torch.ones(S, S, dtype=torch.bool), diagonal=1)
+# tensor([[False,  True,  True,  True],   ← 第 0 行只能看自己
+#         [False, False,  True,  True],   ← 第 1 行能看 0,1
+#         [False, False, False,  True],
+#         [False, False, False, False]])</code></pre>
+    <p><code>diagonal=1</code>：从主对角线上方 1 格开始为 True（即未来位置）。</p>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>import math, torch
+
+def causal_attention(Q, K, V):
+    d_k = K.size(-1)
+    scores = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)  # (B, S, S)
+    S = scores.size(-1)
+    mask = torch.triu(
+        torch.ones(S, S, device=scores.device, dtype=torch.bool),
+        diagonal=1
+    )
+    scores = scores.masked_fill(mask.unsqueeze(0), float('-inf'))
+    weights = torch.softmax(scores, dim=-1)
+    return torch.bmm(weights, V)</code></pre>
+
+    <div class="callout">
+      <strong>为什么是 <code>-inf</code> 而不是 0？</strong><br>
+      直接把分数设为 0 不对：softmax 中 <code>exp(0) = 1</code>，仍会有权重。
+      设为 <code>-inf</code> 后 <code>exp(-inf) = 0</code>，权重精确为 0。
+    </div>
+    <div class="callout callout-warn">
+      <strong>注意：</strong><code>mask.unsqueeze(0)</code> 把 <code>(S,S)</code> 扩展为 <code>(1,S,S)</code>，
+      从而广播到 <code>(B,S,S)</code>。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！triu(diagonal=1) 取主对角线上方（不含主对角线），即 j > i 的位置。"
+         data-feedback-incorrect="✗ 不对。diagonal=1 表示从主对角线上方 1 格开始，主对角线本身是 False（可见自身）。">
+      <h3>Q1 · triu diagonal</h3>
+      <p><code>torch.triu(ones(S,S), diagonal=1)</code> 中哪些位置为 True？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> j >= i 的位置（包含主对角线）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> j > i 的位置（不含主对角线）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> j < i 的位置（下三角）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> i == j 的位置（仅主对角线）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！exp(-inf) = 0，softmax 后未来位置权重精确为 0，不影响其他位置。"
+         data-feedback-incorrect="✗ 不对。设 0 的话，exp(0)=1，softmax 后仍有权重。必须用 -inf。">
+      <h3>Q2 · 为什么用 -inf</h3>
+      <p>因果掩码为什么要填 <code>-inf</code> 而不是 <code>0</code>？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> -inf 更节省内存</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 0 会导致梯度消失</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> exp(0)=1 仍有权重；exp(-inf)=0 精确屏蔽</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> PyTorch 的 masked_fill 只支持 -inf</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！unsqueeze(0) 把 (S,S) 变成 (1,S,S)，再广播到 (B,S,S)。"
+         data-feedback-incorrect="✗ 不对。mask 是 (S,S)，需要 unsqueeze(0) 才能广播到 (B,S,S)。">
+      <h3>Q3 · 广播</h3>
+      <p><code>scores: (B, S, S)</code>，mask <code>(S, S)</code>，为什么需要 <code>mask.unsqueeze(0)</code>？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 把 (S,S) 扩展为 (1,S,S)，广播到 (B,S,S)</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 转换数据类型</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 复制 B 份 mask</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> masked_fill 不支持 2D mask</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def causal_attention(Q, K, V):
+    d_k = K.size(-1)
+    scores = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)
+    S = scores.size(-1)
+    mask = torch.triu(torch.ones(S, S, device=scores.device, dtype=torch.bool), diagonal=1)
+    scores = scores.masked_fill(mask.unsqueeze(0), float('-inf'))
+    weights = torch.softmax(scores, dim=-1)
+    return torch.bmm(weights, V)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>掩码</strong>：<code>torch.triu(..., diagonal=1)</code> 构造上三角 bool mask</li>
+      <li><strong>填充</strong>：<code>masked_fill(mask, float('-inf'))</code>，不是 0</li>
+      <li><strong>广播</strong>：mask <code>(S,S)</code> → <code>unsqueeze(0)</code> → <code>(1,S,S)</code></li>
+      <li><strong>延伸</strong>：滑动窗口注意力 = 在上三角掩码基础上再加距离限制</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："为什么叫因果注意力？"，"KV Cache 怎么和因果注意力配合？"</div>
+  <nav class="lesson-nav">
+    <a href="./0008-rmsnorm.html">← 08 · RMSNorm</a>
+    <a href="./0010-gqa.html">下一课：10 · GQA →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

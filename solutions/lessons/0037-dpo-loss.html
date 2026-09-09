@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>37 · DPO Loss — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0036-int8-quantization.html">← 36 · INT8 Quantization</a><span>›</span><span>第 37 课：DPO Loss</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:90.2%"></div></div>
+  <div class="progress-label">37 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 37 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>DPO 损失</h1>
+    <p class="lesson-tagline">直接偏好优化：无需奖励模型，用对比对数似然直接优化偏好。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 DPO 如何绕过 RLHF 的奖励模型</li>
+      <li>掌握 logsigmoid(β * (chosen_reward - rejected_reward)) 的含义</li>
+      <li>能手写 DPO 损失函数</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>DPO 的推导思路</h3>
+    <pre><code># 标准 RLHF：训练奖励模型 → PPO 强化学习优化（复杂）
+# DPO 洞察：从 RL 最优解中推导出等价损失（直接优化！）
+
+# 对每对 (chosen, rejected) 数据：
+# reward(π, y|x) = β * log(π(y|x)/π_ref(y|x))
+#                = β * [logprob_π(y|x) - logprob_ref(y|x)]
+
+# DPO 损失：最大化 chosen 优于 rejected 的对数几率
+# L = -logsigmoid(β * (log_ratio_chosen - log_ratio_rejected))
+# 其中：log_ratio = logprob_policy - logprob_reference</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def dpo_loss(policy_chosen_logps, policy_rejected_logps,
+             ref_chosen_logps, ref_rejected_logps, beta=0.1):
+    # 所有 logps：(B,) 各自序列的 log-likelihood 之和
+
+    # 计算 log ratio（策略相对参考的对数优势）
+    chosen_log_ratio   = policy_chosen_logps   - ref_chosen_logps
+    rejected_log_ratio = policy_rejected_logps - ref_rejected_logps
+
+    # DPO 损失（Bradley-Terry 偏好模型）
+    logits = beta * (chosen_log_ratio - rejected_log_ratio)
+    loss   = -F.logsigmoid(logits).mean()
+    return loss</code></pre>
+
+    <div class="callout">
+      <strong>直觉：</strong>β 控制 KL 惩罚强度（策略不要偏离参考太远）。
+      β 越大 → 越保守（接近 ref 模型）；β 越小 → 越激进（更自由优化偏好）。
+      通常 β=0.1 是好的默认值。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！DPO 的核心优势是不需要单独训练奖励模型，直接用偏好对比数据优化语言模型。"
+         data-feedback-incorrect="✗ 不对。DPO 的主要贡献是绕过奖励模型，直接从偏好数据优化，简化了 RLHF 流程。">
+      <h3>Q1 · DPO vs RLHF</h3>
+      <p>DPO 相比 RLHF 的主要优势是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 不需要偏好数据</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 不需要奖励模型，直接优化</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 训练更慢但质量更高</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 不需要参考模型</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！β 是 KL 惩罚系数：大 β 保守（策略不偏离 ref），小 β 激进（更自由优化偏好）。"
+         data-feedback-incorrect="✗ 不对。β 控制的是策略偏离参考模型的惩罚力度，不是学习率。">
+      <h3>Q2 · β 的作用</h3>
+      <p>DPO 中超参 β 控制的是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 学习率</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> batch size</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> KL 惩罚强度（策略偏离参考模型的代价）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 采样温度</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！log_ratio = logprob_policy - logprob_ref，衡量策略模型相对参考模型对某个回答的偏好增量。"
+         data-feedback-incorrect="✗ 不对。log_ratio = logprob(policy) - logprob(ref)，是策略相对于参考的对数优势比。">
+      <h3>Q3 · log_ratio</h3>
+      <p>DPO 中 <code>log_ratio = policy_logp - ref_logp</code> 表示什么？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 策略相对参考模型的对数概率增益</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 回答的绝对质量得分</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 两个模型输出的 KL 散度</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 回答长度的对数</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def dpo_loss(policy_chosen_logps, policy_rejected_logps,
+             ref_chosen_logps, ref_rejected_logps, beta=0.1):
+    chosen_log_ratio   = policy_chosen_logps   - ref_chosen_logps
+    rejected_log_ratio = policy_rejected_logps - ref_rejected_logps
+    return (-F.logsigmoid(beta * (chosen_log_ratio - rejected_log_ratio))).mean()</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>公式</strong>：<code>-logsigmoid(β*(chosen_ratio - rejected_ratio))</code></li>
+      <li><strong>log_ratio</strong>：policy_logp - ref_logp（策略相对参考的优势）</li>
+      <li><strong>β</strong>：KL 惩罚，控制偏离参考的幅度</li>
+      <li><strong>数据</strong>：每条样本是 (prompt, chosen_response, rejected_response)</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："DPO 和 ORPO 的区别？"，"怎么采集偏好数据？"</div>
+  <nav class="lesson-nav">
+    <a href="./0036-int8-quantization.html">← 36 · INT8 Quantization</a>
+    <a href="./0038-grpo-loss.html">下一课：38 · GRPO Loss →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

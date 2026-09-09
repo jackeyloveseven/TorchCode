@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>34 · Speculative Decoding — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0033-beam-search.html">← 33 · Beam Search</a><span>›</span><span>第 34 课：Speculative Decoding</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:82.9%"></div></div>
+  <div class="progress-label">34 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 34 课</span><span class="badge badge-hard">Hard</span></div>
+    <h1>推测解码</h1>
+    <p class="lesson-tagline">小模型起草，大模型验证：并行验证多个 token，输出分布不变。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解推测解码如何加速自回归生成</li>
+      <li>掌握接受-拒绝采样（accept/reject）机制</li>
+      <li>理解为什么输出分布与大模型单独生成相同</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>算法思路</h3>
+    <pre><code># 关键洞察：
+# - 大模型（target）每步只生成 1 token，速度慢
+# - 小模型（draft）很快，但质量低
+# - 用小模型生成 k 个 token 草稿
+# - 大模型一次 forward 验证所有 k 个 token（并行！）
+# - 按概率比接受/拒绝：p_target / p_draft
+
+# 接受条件：
+# r = uniform(0, 1)
+# if r < min(1, p_target(x_i) / p_draft(x_i)):
+#     accept（保留草稿 token）
+# else:
+#     reject（从修正分布采样新 token，后面的草稿全丢）</code></pre>
+
+    <h3>修正分布（保证分布无偏）</h3>
+    <pre><code># 拒绝时，从 p_corrected 采样：
+p_corrected(x) = normalize(max(0, p_target(x) - p_draft(x)))
+# 这保证最终输出分布 = p_target（数学上可证明）</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def speculative_step(draft_probs, target_probs, draft_token):
+    # draft_probs, target_probs: (vocab_size,) 概率分布
+    # draft_token: 草稿模型采样的 token id
+    p_d = draft_probs[draft_token]
+    p_t = target_probs[draft_token]
+
+    # 接受-拒绝
+    r = torch.rand(1).item()
+    if r < min(1.0, (p_t / (p_d + 1e-10)).item()):
+        return draft_token, True   # 接受
+    else:
+        # 从修正分布采样
+        corrected = torch.clamp(target_probs - draft_probs, min=0)
+        corrected = corrected / corrected.sum()
+        new_token = torch.multinomial(corrected, 1).item()
+        return new_token, False    # 拒绝，用修正 token</code></pre>
+
+    <div class="callout callout-ok">
+      <strong>加速效果：</strong>平均接受率 α 越高，加速越大。
+      如果 draft 和 target 分布接近，α→1，k 个草稿几乎全被接受，
+      相当于每次大模型 forward 产出 k 个 token（≈ k 倍加速）。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！推测解码的核心优势是：大模型可以并行验证所有草稿 token（一次 forward 处理 k 个），而不是串行生成 k 次。"
+         data-feedback-incorrect="✗ 不对。推测解码加速的原因是大模型并行验证 k 个草稿，不是节省参数。">
+      <h3>Q1 · 加速原理</h3>
+      <p>推测解码为什么能加速大模型推理？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 大模型参数被小模型替代</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 大模型一次 forward 可并行验证 k 个草稿 token</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 小模型完全替代大模型，质量不变</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 使用更激进的量化</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！接受条件 min(1, p_target/p_draft)，当 p_target >= p_draft 时（大模型更喜欢这个 token），总是接受。"
+         data-feedback-incorrect="✗ 不对。接受概率 = min(1, p_t/p_d)；p_t >= p_d 时 ≥ 1，即 100% 接受。">
+      <h3>Q2 · 接受条件</h3>
+      <p>何时草稿 token 一定被接受（100%）？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 总是被接受</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 随机接受，与概率无关</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> p_target(token) ≥ p_draft(token) 时</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 只有 token 是 EOS 时</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！修正分布 max(0, p_target - p_draft) 保证最终输出服从 p_target 分布（可数学证明）。"
+         data-feedback-incorrect="✗ 不对。修正分布 = max(0, p_t - p_d)，拒绝时从此分布采样，确保无偏性。">
+      <h3>Q3 · 分布无偏</h3>
+      <p>拒绝草稿 token 后，从什么分布采样新 token？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> max(0, p_target - p_draft)（修正分布）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> p_target（完整目标分布）</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> p_draft（重新采样）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 均匀分布</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def speculative_step(draft_probs, target_probs, draft_token):
+    p_d = draft_probs[draft_token]
+    p_t = target_probs[draft_token]
+    r   = torch.rand(1).item()
+    if r < min(1.0, (p_t / (p_d + 1e-10)).item()):
+        return draft_token, True
+    # 修正分布
+    corrected = torch.clamp(target_probs - draft_probs, min=0)
+    corrected = corrected / (corrected.sum() + 1e-10)
+    return torch.multinomial(corrected, 1).item(), False</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>流程</strong>：draft 生成 k 个→target 并行验证→按比率接受/拒绝</li>
+      <li><strong>接受率</strong>：<code>min(1, p_target/p_draft)</code></li>
+      <li><strong>修正分布</strong>：<code>max(0, p_t - p_d)</code>，保证输出分布无偏</li>
+      <li><strong>加速</strong>：平均接受率越高，越接近 k 倍加速</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Medusa 和 EAGLE 是如何改进推测解码的？"，"如何选择合适的草稿模型？"</div>
+  <nav class="lesson-nav">
+    <a href="./0033-beam-search.html">← 33 · Beam Search</a>
+    <a href="./0035-bpe.html">下一课：35 · BPE Tokenizer →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>

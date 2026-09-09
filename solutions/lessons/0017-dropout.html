@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>17 · Dropout — TorchCode</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body><div class="container">
+  <nav class="breadcrumb"><a href="./0016-cross-entropy.html">← 16 · Cross Entropy</a><span>›</span><span>第 17 课：Dropout</span></nav>
+  <div class="progress"><div class="progress-fill" style="width:41.5%"></div></div>
+  <div class="progress-label">17 / 41 题</div>
+  <header class="lesson-header">
+    <div class="lesson-meta"><span class="lesson-number">第 17 课</span><span class="badge badge-easy">Easy</span></div>
+    <h1>Dropout</h1>
+    <p class="lesson-tagline">随机丢弃神经元防过拟合——训练时 mask，推理时恢复。</p>
+  </header>
+
+  <section>
+    <h2>学习目标</h2>
+    <ul>
+      <li>理解 inverted dropout（训练时除以 1-p）的原理</li>
+      <li>掌握训练/推理不同行为的控制方式</li>
+      <li>能手写支持 <code>training</code> 标志的 Dropout</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>核心概念</h2>
+    <h3>Inverted Dropout（反向 Dropout）</h3>
+    <pre><code># 训练时：以概率 p 置零，并除以 (1-p) 缩放
+# 这样期望值保持不变：
+# E[x_out] = (1-p) * x/(1-p) + p * 0 = x
+
+# 推理时：直接返回 x（不需要任何缩放）
+# 因为期望值在训练时已经校正过了</code></pre>
+
+    <h3>为什么要除以 (1-p)？</h3>
+    <pre><code># 不除的情况（原始 Dropout 论文）：
+# 训练：随机置零（期望 = 0.5x，如果 p=0.5）
+# 推理：乘以 0.5（手动补偿）
+# → 推理时要记得乘补偿系数，麻烦
+
+# Inverted Dropout（现代实践）：
+# 训练：置零 + 除以 (1-p) → 期望 = x
+# 推理：直接返回 x
+# → 推理代码更干净，不用改</code></pre>
+  </section>
+
+  <section>
+    <h2>PyTorch 实现</h2>
+    <pre><code>def dropout(x, p=0.5, training=True):
+    if not training or p == 0:
+        return x
+    # 生成 Bernoulli mask：以概率 (1-p) 为 True
+    mask = (torch.rand_like(x) > p).float()
+    return x * mask / (1 - p)    # inverted dropout</code></pre>
+
+    <div class="callout">
+      <strong>nn.Module 版本：</strong><code>nn.Dropout(p=0.5)</code> 内部与上面等价，
+      会自动根据 <code>model.train()</code> / <code>model.eval()</code> 切换行为。
+    </div>
+  </section>
+
+  <section>
+    <h2>测验</h2>
+    <div class="quiz-question" data-correct="C"
+         data-feedback-correct="✓ 正确！Inverted Dropout 训练时缩放（除以1-p），推理时直接返回x，保证期望值一致。"
+         data-feedback-incorrect="✗ 不对。Inverted Dropout 在训练时做缩放，使推理时不需要额外处理。">
+      <h3>Q1 · Inverted Dropout</h3>
+      <p>Inverted Dropout 在训练时为什么要除以 <code>(1-p)</code>？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 增大学习率效果</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 让 mask 更稀疏</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 保持输出期望值不变，推理时无需额外缩放</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 防止梯度爆炸</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="A"
+         data-feedback-correct="✓ 正确！推理时 Dropout 直接返回 x（全部神经元激活），因为训练时已做了缩放补偿。"
+         data-feedback-incorrect="✗ 不对。推理时 Dropout 什么都不做，直接返回原始输入 x。">
+      <h3>Q2 · 推理行为</h3>
+      <p>使用 Inverted Dropout，推理时（training=False）的行为是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> 直接返回 x（无 mask，无缩放）</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 乘以 (1-p)</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 乘以 p</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 随机 mask 但不缩放</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-question" data-correct="B"
+         data-feedback-correct="✓ 正确！torch.rand_like(x) > p 生成 Bernoulli(1-p) 的 True/False mask。"
+         data-feedback-incorrect="✗ 不对。rand_like 生成均匀分布，> p 则以概率 (1-p) 为 True，即保留神经元的概率。">
+      <h3>Q3 · Mask 生成</h3>
+      <p><code>torch.rand_like(x) > p</code> 生成的 mask 中，True 的期望比例是？</p>
+      <ul class="quiz-options">
+        <li class="quiz-option" data-key="A"><span class="quiz-key">A</span> p</li>
+        <li class="quiz-option" data-key="B"><span class="quiz-key">B</span> 1-p</li>
+        <li class="quiz-option" data-key="C"><span class="quiz-key">C</span> 0.5（与 p 无关）</li>
+        <li class="quiz-option" data-key="D"><span class="quiz-key">D</span> 1.0（全部为 True）</li>
+      </ul>
+      <div class="quiz-feedback"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>参考解法</h2>
+    <div class="solution-section">
+      <button class="solution-toggle-btn" data-target="sol">▼ 查看参考解法</button>
+      <div id="sol" class="solution-reveal">
+        <pre><code>def dropout(x, p=0.5, training=True):
+    if not training or p == 0.0:
+        return x
+    mask = (torch.rand_like(x) > p).float()
+    return x * mask / (1 - p)</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>面试要点</h2>
+    <ul>
+      <li><strong>Inverted Dropout</strong>：训练时 <code>x * mask / (1-p)</code></li>
+      <li><strong>推理时</strong>：直接返回 x</li>
+      <li><strong>Mask</strong>：<code>rand_like(x) > p</code>，保留概率 = 1-p</li>
+      <li><strong>常见 p 值</strong>：0.1（Transformer），0.5（FC 层）</li>
+    </ul>
+  </section>
+
+  <div class="ask-claude"><strong>有疑问？</strong>可以问："Dropout 和 BatchNorm 能一起用吗？"，"为什么 LLM 推理时不用 Dropout？"</div>
+  <nav class="lesson-nav">
+    <a href="./0016-cross-entropy.html">← 16 · Cross Entropy</a>
+    <a href="./0018-embedding.html">下一课：18 · Embedding →</a>
+  </nav>
+</div>
+<script src="../assets/quiz.js"></script>
+</body></html>
